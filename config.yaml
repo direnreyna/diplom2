@@ -1,0 +1,8 @@
+paths:
+  input_dir: "data/input"
+  output_dir: "data/output"
+  source_dir: "src"
+
+params:
+  batch_size: 32
+  epochs: 10
