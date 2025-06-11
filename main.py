@@ -1,12 +1,17 @@
 # main.py
 
-#import src.config
-from src.config import config
+import os
+import sys
+# Добавляем папку src в PYTHONPATH, чтобы можно было импортировать модули
+sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from src.file_management import FileManagement
-from src.dataset_preparer import DatasetPreparation
-from src.model_trainer import ModelTraining
-from src.model_producer import ModelProduction
+#import src.config
+from config import config
+
+from file_management import FileManagement
+from dataset_preparer import DatasetPreparation
+from model_trainer import ModelTraining
+from model_producer import Production
 
 # Подготовка файлов
 manager = FileManagement()
@@ -15,7 +20,7 @@ file_list = manager.pipeline()
 	## распаковка архивов
 	## преоборазование файлов
 	## удаление ненужных файлов
-	## складирование енужных файлов в спец. директорию.
+	## складирование нужных файлов в спец. директорию.
 
 # Подготовка датасета
 preparer = DatasetPreparation()
@@ -34,5 +39,5 @@ trainer = ModelTraining()
 trainer.pipeline(x_train, y_train, x_val, y_val, x_test, y_test)
 
 # Инференс модели
-producer = ModelProduction()
+producer = Production()
 producer.pipeline()

@@ -6,34 +6,25 @@ import zipfile
 import rarfile
 import tarfile
 import py7zr
+from typing import List
 from .config import config
 from tqdm import tqdm  # <-- добавляем прогресс-бар
 
-class FilePreparer:
-
+class FileManagement:
     def __init__(self) -> None:
         self.input_dir = config['paths']['input_dir']
         self.temp_dir = config['paths']['temp_dir']
+        self.list_files = []
         os.makedirs(self.temp_dir, exist_ok=True)
 
-    def pipeline(self) -> None:
-        """
-        Подготавливает файлы: распаковывает архивы, копирует файлы .txt, .csv во временную папку.
-        """
+    def pipeline(self) -> List[str]:
+        """Подготавливает файлы: распаковывает архивы, копирует файлы .txt, .csv во временную папку."""
 
         self._copy_files_to_temp()                              # Копируем .txt, .csv в self.temp_dir
         #self._extract_archives()                               # Если будут: Распаковываем все архивы в self.temp_dir
+        return self.list_files
 
-    def _copy_single_file_to_temp(self, single_file: str) -> str:
-        base_name = os.path.basename(single_file)
-        src = os.path.join(self.input_dir, base_name)
-        dst = os.path.join(self.temp_dir, base_name)
-        print(f"{src=}")
-        print(f"{dst=}")
-        shutil.copy(src, dst)
-        return dst
-
-    def _copy_files_to_temp(self):
+    def _copy_files_to_temp(self) -> None:
         """Копирует в temp_dir все .txt, .csv из self.input_dir (включая подпапки)"""
         
         # Собираем все подходящие файлы
@@ -45,7 +36,10 @@ class FilePreparer:
 
         # Прогресс-бар для всех файлов сразу
         for single_file_path in tqdm(all_files, desc="Копирование нужных файлов (.txt, .csv)", unit="файл"):
-            self._copy_single_file_to_temp(single_file_path)
+            base_name = os.path.basename(single_file_path)
+            destination_path = os.path.join(self.temp_dir, base_name)
+            shutil.copy(single_file_path, destination_path)
+            self.list_files.append(destination_path)
 
     def _extract_archives(self):
         """
@@ -54,6 +48,7 @@ class FilePreparer:
         Использует пути, переданные при инициализации класса через self.input_dir и self.temp_dir.
         Не заходит в подпапки, работает только с файлами верхнего уровня.
         """
+
         # Поддерживаемые расширения
         archive_extensions = ('.zip', '.tar', '.tar.gz', '.tgz', '.targz', '.7z', '.rar')
         
