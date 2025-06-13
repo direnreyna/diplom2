@@ -50,13 +50,15 @@ class DatasetAnalyze:
         нормирование/стандартизирование
         разделение X, y на выборки x_train, y_train, x_val, y_val, x_test, y_test        
         """
-        # Анализ статистики данных
+        
+        # Анализ каналов ЭКГ
+        self._check_channels_per_patient()                      # Формирует словарь доступных каналов пациенту
         self._analyze_channels_statistics()                     # Выбирает 2 самых популярных канала и выводит статистику по ним
         self._visualize_channels_per_patient_table()            # Вывод таблицы: какие каналы есть у какого пациента
         self._visualize_channel_distribution()                  # График: распределение популярности каналов (barplot)
         self._visualize_patient_channel_matrix()                # Heatmap: матрица наличия каналов по пациентам
 
-        # Анализ статистики аномалий
+        # Анализ R-пиков и типов событий
         self._analyze_r_peak_statistics()                       # Формирует статистику по R-пикам и типам событий 
         self._visualize_global_peak_distribution()              # Pie / barplot: общее распределение типов R-пиков
         self._visualize_abnormal_peak_ratio()                   # Barplot: процент аномальных пиков на пациента
@@ -64,13 +66,21 @@ class DatasetAnalyze:
         self._visualize_patient_peak_types_bars(mode='full')    # Color-bars: топ-типы пиков у каждого пациента
         self._visualize_patient_peak_types_bars(mode='reduced') # Color-bars: аггрегированные топ-типы пиков у каждого пациента
         self._visualize_top_anomalies_pie()                     # Pie chart: самые частые аномалии по пациентам
-
+        
         # Формирование окончательных датасетов
-        self._filter_dataframes()                               # Фильтрует сигналы и аннотации по целевым каналам для обучения и сравнения
+        self._filter_dataframes()                               # Формирование итоговых датафреймов под 2 задачи
 
-        x_train, y_train, x_val, y_val, x_test, y_test = '', '', '', '', '', ''
-        return (x_train, y_train, x_val, y_val, x_test, y_test)
-
+        return (
+            self.df_top_signals, 
+            self.df_top_annotations, 
+            self.df_cross_signals, 
+            self.df_cross_annotations, 
+            self.df_united_signals_1, 
+            self.df_united_annotation_1, 
+            self.df_united_signals_2, 
+            self.df_united_annotation_2
+        )
+    
     def _check_channels_per_patient(self):
         """
         Проверяет, какие каналы доступны у каждого пациента.
@@ -78,7 +88,6 @@ class DatasetAnalyze:
             {pid: {'channels': [список], 'ohe': [вектор]}}
         """
         all_channels = ['MLII', 'V1', 'V2', 'V4', 'V5']
-        self.channels_per_patient = {}
 
         for pid in tqdm(self.patient_ids, desc="Проверяем каналы", unit=" пациент"):
             df_p = self.df_all_signals[self.df_all_signals['Patient_id'] == pid]
@@ -97,9 +106,6 @@ class DatasetAnalyze:
         Вспомогательный метод. Нужен для анализа данных и принятия решения о выборе каналов,
         на основе которых будет формироваться однородные данные будущего ДС.
         """
-    
-        # === Проверка наличие каналов у каждого пациента ===
-        self._check_channels_per_patient()
 
         channel_counter = Counter()
         for data in self.channels_per_patient.values():
