@@ -5,7 +5,7 @@ import pandas as pd
 
 from tqdm import tqdm
 from config import config
-from typing import Tuple
+from typing import Tuple, List
 
 class DatasetLoading:
     def __init__(self) -> None:
@@ -14,7 +14,7 @@ class DatasetLoading:
         self.df_all_signals = pd.DataFrame()
         self.df_all_annotations = pd.DataFrame()
     
-    def pipeline(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def pipeline(self) -> Tuple[pd.DataFrame, pd.DataFrame, List]:
         """
         Формирует датафреймы:
         self.df_all_signals     - с подробными данными ЭКГ по всем пациентам
@@ -42,7 +42,7 @@ class DatasetLoading:
                 header=None,
                 names=['Time', 'Sample', 'Type', 'Sub', 'Chan', 'Num', 'Aux'],
                 quoting=3
-            )[['Sample', 'Type']]                               ## Оставляем только значимые столбцы: маркер и метку
+            )[['Sample', 'Type', 'Aux']]                               ## Оставляем только значимые столбцы: маркер и метку
             df_annotation['Patient_id'] = pid
             all_annotations.append(df_annotation)
 
@@ -68,4 +68,4 @@ class DatasetLoading:
         print("\nКолонки:", list(self.df_all_annotations.columns))
         print("\nТипы аннотаций:", self.df_all_annotations['Type'].unique())
 
-        return self.df_all_signals, self.df_all_annotations
+        return self.df_all_signals, self.df_all_annotations, self.patient_ids

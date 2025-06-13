@@ -1,3 +1,4 @@
+seaborn==0.13.2
 PyYAML==6.0.2
 gradio==5.31.0
 scikit-learn

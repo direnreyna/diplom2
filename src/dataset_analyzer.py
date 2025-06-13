@@ -8,13 +8,13 @@ import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 from config import config
-from typing import Tuple
+from typing import Tuple, List
 from collections import Counter
 
 class DatasetAnalyze:
-    def __init__(self, df_all_signals: pd.DataFrame, df_all_annotations: pd.DataFrame) -> None:
+    def __init__(self, df_all_signals: pd.DataFrame, df_all_annotations: pd.DataFrame, patient_ids: List) -> None:
         self.temp_dir = config['paths']['temp_dir']
-        self.patient_ids = []                                   # Список всех ID пациентов (берётся из имён файлов)
+        self.patient_ids = patient_ids                          # Список всех ID пациентов (берётся из имён файлов)
         self.df_all_signals = df_all_signals                    # Все сигналы ЭКГ до фильтрации: по всем каналам
         self.df_all_annotations = df_all_annotations            # Все аннотации
         
@@ -36,6 +36,7 @@ class DatasetAnalyze:
         self.df_patient_peak_top_types = pd.DataFrame()         # Топ-5 типов пиков на пациента → только проценты
         self.df_patient_normal_abnormal_ratio = pd.DataFrame()  # Процент нормальных / аномальных пиков на пациента
         self.df_patient_top_anomaly = pd.DataFrame()            # Самый частый аномальный пик у каждого пациента + его доля
+        self.rhythm_types = {}                                  # Словарь Aux-событий 
 
         os.makedirs(self.temp_dir, exist_ok=True)
 
@@ -57,6 +58,15 @@ class DatasetAnalyze:
         self._visualize_channels_per_patient_table()            # Вывод таблицы: какие каналы есть у какого пациента
         self._visualize_channel_distribution()                  # График: распределение популярности каналов (barplot)
         self._visualize_patient_channel_matrix()                # Heatmap: матрица наличия каналов по пациентам
+
+        # Добавление в аннотации ритмов из Aux
+        self._add_rhythm_annotations()                          # Добавляет колонку Current_Rhythm в df_all_annotations на основе колонки Aux
+        self._analyze_Current_Rhythm_statistics()               # Формирует общую статистику по Aux-событиям
+        self._analyze_patient_rhythm_type_stats()               # Формирует статистику Aux-событий по каждоиу пациенту
+        self._binary_rhythm_type_analysis()                     # Анализирует баланс нормальных R-пиков в нормальных Aux-событиях
+        self._visualize_global_rhythm_distribution()            # 
+        self._visualize_rhythm_abnormal_distribution()          # 
+        self._visualize_binary_rhythm_analysis()                # 
 
         # Анализ R-пиков и типов событий
         self._analyze_r_peak_statistics()                       # Формирует статистику по R-пикам и типам событий 
@@ -95,7 +105,6 @@ class DatasetAnalyze:
                 ch for ch in all_channels if ch in df_p.columns and not df_p[ch].isna().all()
             ]
             ohe_vector = [1 if ch in available_channels else 0 for ch in all_channels]
-
             self.channels_per_patient[pid] = {
                 'channels': available_channels,
                 'ohe': ohe_vector
@@ -110,7 +119,6 @@ class DatasetAnalyze:
         channel_counter = Counter()
         for data in self.channels_per_patient.values():
             channel_counter.update(data['channels'])
-
         # === Таблица распределения каналов по пациентам ===
         print("\n=== Таблица распределения каналов по пациентам ===")
         print("Канал | Число пациентов с этим каналом")
@@ -206,69 +214,223 @@ class DatasetAnalyze:
         plt.savefig(os.path.join(self.temp_dir, "patient_channel_matrix.png"))
         plt.show()
 
-    def _filter_dataframes(self):
+    def _add_rhythm_annotations(self):
         """
-        Формирует датафреймы сигналов и аннотаций по двум каналам:
-            - self.df_top_signals / self.df_top_annotations → обучение на основном канале (target_channel_name_1)
-            - self.df_cross_signals / self.df_cross_annotations → тестирование на втором канале (target_channel_name_2)
-            - self.df_united_signals_1 / self.df_united_annotation_1 → данные для модели 1
-            - self.df_united_signals_2 / self.df_united_annotation_2 → данные для модели 2
+        Добавляет колонку 'Current_Rhythm' в self.df_all_annotations.
+        Значение распространяется до следующего изменения ритма.
         """
 
-        # Фильтруем по первому каналу
-        self.df_top_signals, self.df_top_annotations = self._filter_df(
-            self.df_all_signals,
+        # Извлекаем только строки с ритмическими аннотациями
+        rhythm_mask = self.df_all_annotations['Aux'].notna() & self.df_all_annotations['Aux'].str.startswith('(')
+        rhythm_df = self.df_all_annotations.loc[rhythm_mask, ['Sample', 'Patient_id', 'Aux']].copy()
+
+        # Убираем скобку '(' из значения
+        rhythm_df['Current_Rhythm'] = rhythm_df['Aux'].str[1:]  # например, '(AFIB' → 'AFIB'
+
+        # Удаляем исходную колонку Aux (если не нужна далее)
+        rhythm_df.drop(columns=['Aux'], inplace=True)
+
+        # Объединяем обратно по Patient_id и Sample
+        # НО нам нужно заполнить NaN вниз — forward fill по каждому пациенту
+        self.df_all_annotations = pd.merge(
             self.df_all_annotations,
-            self.target_channel_name_1
-        )
-        print(f"Оставлено записей после фильтрации (по {self.target_channel_name_1}): {len(self.df_top_signals)}")
-        print(f"Оставлено аннотаций после фильтрации (по {self.target_channel_name_1}): {len(self.df_top_annotations)}")
-
-        # Фильтруем по второму каналу
-        self.df_cross_signals, self.df_cross_annotations = self._filter_df(
-            self.df_all_signals,
-            self.df_all_annotations,
-            self.target_channel_name_2
-        )
-        print(f"Оставлено записей после фильтрации (по {self.target_channel_name_2}): {len(self.df_cross_signals)}")
-        print(f"Оставлено аннотаций после фильтрации (по {self.target_channel_name_2}): {len(self.df_cross_annotations)}")
-
-        # Находим общих пациентов
-        common_pids = np.intersect1d(
-            self.df_top_signals['Patient_id'].unique(),
-            self.df_cross_signals['Patient_id'].unique()
+            rhythm_df[['Sample', 'Patient_id', 'Current_Rhythm']],
+            on=['Sample', 'Patient_id'],
+            how='left'
         )
 
-        # Двойная фильтрация по первому каналу
-        self.df_united_signals_1 = self.df_top_signals[self.df_top_signals['Patient_id'].isin(common_pids)]
-        self.df_united_annotation_1 = self.df_top_annotations[self.df_top_annotations['Patient_id'].isin(common_pids)]
+        # Заполняем пропуски в Current_Rhythm
+        # Сортируем по Patient_id и Sample, чтобы заполнение шло по времени
+        self.df_all_annotations.sort_values(['Patient_id', 'Sample'], inplace=True)
+        self.df_all_annotations['Current_Rhythm'] = (
+            self.df_all_annotations.groupby('Patient_id', group_keys=False)['Current_Rhythm'].apply(lambda x: x.ffill())
+        )
 
-        # Двойная фильтрация по второму каналу
-        self.df_united_signals_2 =  self.df_cross_signals[self.df_cross_signals['Patient_id'].isin(common_pids)]
-        self.df_united_annotation_2 =  self.df_cross_annotations[self.df_cross_annotations['Patient_id'].isin(common_pids)]
-        print(f"Оставлено записей после 2-ной фильтрации (по {self.target_channel_name_1} и {self.target_channel_name_2}): {len(self.df_united_signals_1)}")
-        print(f"Оставлено аннотаций после 2-ной фильтрации (по {self.target_channel_name_1} и {self.target_channel_name_2}): {len(self.df_united_annotation_1)}")
+        #print("Колонка 'Current_Rhythm' добавлена к аннотациям.")
 
-    def _filter_df(self, df_s, df_a, channel):
+    def _analyze_Current_Rhythm_statistics(self):
         """
-        Фильтрует сигналы и аннотации по наличию данных в указанном канале.
-
-        :param df_s: исходный датафрейм сигналов (pd.DataFrame)
-        :param df_a: исходный датафрейм аннотаций (pd.DataFrame)
-        :param channel: название канала для фильтрации (например 'MLII', 'V1')
-        :return: df_filtered_s, df_filtered_a
+        Анализирует распределение событий в поле 'Current_Rhythm'
+        Формирует статистику: частота встречаемости Current_Rhythm-меток
         """
 
-        # Фильтруем сигналы по наличию данных в целевом канале
-        df_filtered_s = (df_s[df_s[channel].notna()][['Sample', channel, 'Patient_id']])
+        # --- Убедимся, что 'Current_Rhythm' присутствует ---
+        if 'Current_Rhythm' not in self.df_all_annotations.columns:
+            print("Колонка 'Current_Rhythm' отсутствует в аннотациях")
+            return
 
-        # Получаем уникальные pid из отфильтрованных сигналов
-        valid_pids = df_filtered_s['Patient_id'].unique()
+        # Берём только колонку 'Current_Rhythm'
+        rhythm_series = self.df_all_annotations['Current_Rhythm']
 
-        # Фильтруем аннотации
-        df_filtered_a = df_a[df_a['Patient_id'].isin(valid_pids)]
+        # Убираем NaN
+        rhythm_series = rhythm_series[rhythm_series.notna()]
 
-        return df_filtered_s, df_filtered_a
+        # Считаем встречаемость каждого ритма
+        rhythm_counts = rhythm_series.value_counts()
+        total = len(rhythm_series)
+        rhythm_percent = (rhythm_counts / total * 100).round(2)
+
+        # Сохраняем в датафрейм
+        self.df_global_aux_distribution = pd.DataFrame({
+            'Count': rhythm_counts,
+            'Percent': rhythm_percent
+        })
+
+        # Сохраняем словарь типов Aux-событий
+        self.rhythm_types = rhythm_series.unique().tolist()
+
+        print("\n=== Распределение ритмов из Current_Rhythm ===")
+        print(self.df_global_aux_distribution.sort_values(by='Count', ascending=False))
+
+
+    def _analyze_patient_rhythm_type_stats(self):
+        """
+        Собирает статистику распределения Type внутри Current_Rhythm на пациента.
+        Формирует датафрейм self.df_rhythm_type_distribution
+        """
+
+        all_stats = []
+
+        for pid in tqdm(self.patient_ids, desc="Распределение Type в Current_Rhythm", unit=" пациент"):
+            df_p = self.df_all_annotations[self.df_all_annotations['Patient_id'] == pid]
+
+            for rhythm in self.rhythm_types:
+                df_r = df_p[df_p['Current_Rhythm'] == rhythm]
+
+                if df_r.empty:
+                    continue
+
+                total_peaks = len(df_r)
+                normal_count = len(df_r[df_r['Type'] == 'N'])
+                abnormal_count = len(df_r[df_r['Type'] != 'N'])
+
+                stats = {
+                    'Patient_id': pid,
+                    'Rhythm': rhythm,
+                    'Total_peaks': total_peaks,
+                    'Normal_count': normal_count,
+                    'Normal_percent': round((normal_count / total_peaks * 100), 2),
+                    'Abnormal_count': abnormal_count,
+                    'Abnormal_percent': round((abnormal_count / total_peaks * 100), 2),
+                }
+
+                # Можно добавить и конкретные типы аномалий
+                anomaly_types = ['V', 'A', 'F', 'Q', 'L', 'R']
+                for atype in anomaly_types:
+                    count = len(df_r[df_r['Type'] == atype])
+                    stats[f'{atype}_count'] = count
+                    stats[f'{atype}_percent'] = round((count / total_peaks * 100), 2)
+
+                all_stats.append(stats)
+
+        # Сохраняем как датафрейм
+        self.df_rhythm_type_distribution = pd.DataFrame(all_stats).fillna(0).astype({
+            'Patient_id': str,
+            'Rhythm': str,
+            'Total_peaks': int,
+            **{f'{t}_count': int for t in ['Normal', 'Abnormal', 'V', 'A', 'F', 'Q', 'L', 'R']}
+        })
+
+        print("\n=== Распределение типов пиков внутри ритмов ===")
+        print(self.df_rhythm_type_distribution.head())
+
+    def _binary_rhythm_type_analysis(self):
+        """
+        Проводит бинарный анализ:
+            - Категория 0: Type == 'N' и Current_Rhythm == 'N' → "чистая норма"
+            - Категория 1: все остальные случаи → "аномалия"
+        
+        Выводит статистику по всему датасету.
+        """
+
+        if 'Current_Rhythm' not in self.df_all_annotations.columns:
+            print("Колонка 'Current_Rhythm' отсутствует — невозможно провести бинарный анализ")
+            return
+
+        # --- Подсчёт категорий ---
+        mask_normal = (self.df_all_annotations['Type'] == 'N') & \
+                    (self.df_all_annotations['Current_Rhythm'] == 'N')
+
+        normal_count = mask_normal.sum()
+        abnormal_count = len(self.df_all_annotations) - normal_count
+
+        total = normal_count + abnormal_count
+
+        percent_normal = round((normal_count / total) * 100, 2)
+        percent_abnormal = round((abnormal_count / total) * 100, 2)
+
+        # --- Вывод ---
+        print("\n=== Бинарная статистика ===")
+        print(f"Чисто N в ритме N: {normal_count} ({percent_normal}%)")
+        print(f"Всё остальное (в т.ч. N в других ритмах): {abnormal_count} ({percent_abnormal}%)\n")
+
+        print("Пример распределения:")
+        print(self.df_all_annotations.loc[mask_normal.head().index, ['Patient_id', 'Sample', 'Type', 'Current_Rhythm']])
+        print("...")
+        print(self.df_all_annotations.loc[~mask_normal].head()[['Patient_id', 'Sample', 'Type', 'Current_Rhythm']])
+
+    def _visualize_global_rhythm_distribution(self):
+        """
+        График: общее распределение ритмов из Current_Rhythm (в процентах)
+        """
+
+        df = self.df_global_aux_distribution.sort_values(by='Count', ascending=False).head(10)
+
+        plt.figure(figsize=(12, 6))
+        sns.barplot(x=df.index, y='Percent', data=df, palette='viridis')
+        plt.title("Распределение ритмов из Current_Rhythm (в % от всех пиков)")
+        plt.ylabel("Процент")
+        plt.xlabel("Ритм")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.temp_dir, "global_rhythm_distribution.png"))
+        plt.show()
+
+    def _visualize_rhythm_abnormal_distribution(self):
+        """
+        График: доля аномальных пиков внутри каждого ритма
+        """
+
+        # Фильтрация по ритму и группировка
+        rhythm_summary = (
+            self.df_rhythm_type_distribution.groupby('Rhythm')[['Normal_percent', 'Abnormal_percent']]
+            .mean()
+            .sort_values(by='Abnormal_percent', ascending=False)
+        )
+
+        rhythm_summary.plot(kind='barh', stacked=True, figsize=(12, 8), color=['#4CAF50', '#F44336'])
+        plt.title("Доля нормальных и аномальных пиков внутри ритмов (в %)")
+        plt.xlabel("Процент от всех пиков в ритме")
+        plt.ylabel("Ритм")
+        plt.legend(['Нормальные', 'Аномальные'])
+        plt.gca().invert_yaxis()  # чтобы самые аномальные были сверху
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.temp_dir, "rhythm_abnormal_distribution.png"))
+        plt.show()
+
+    def _visualize_binary_rhythm_analysis(self):
+        """
+        Pie chart: соотношение 'чистых N в N' к 'всему остальному'
+        """
+
+        normal_count = len(self.df_all_annotations[
+            (self.df_all_annotations['Type'] == 'N') &
+            (self.df_all_annotations['Current_Rhythm'] == 'N')
+        ])
+
+        abnormal_count = len(self.df_all_annotations) - normal_count
+
+        labels = ['Чистая норма (N+N)', 'Всё остальное']
+        sizes = [normal_count, abnormal_count]
+        colors = ['#4CAF50', '#F44336']
+
+        plt.figure(figsize=(8, 8))
+        plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, colors=colors)
+        plt.title("Баланс 'чистой нормы' и 'всего прочего'")
+        plt.axis('equal')  # круглый пирог
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.temp_dir, "binary_rhythm_analysis_pie.png"))
+        plt.show()
 
     def _analyze_r_peak_statistics(self):
         """
@@ -347,31 +509,23 @@ class DatasetAnalyze:
         self.df_patient_top_anomaly = pd.DataFrame(top_anomalies)
 
     def _visualize_global_peak_distribution(self):
-        """
-        График: общий профиль всех типов R-пиков (в процентах)
-        """
-
-        df = self.df_global_peak_distribution.sort_values(by='Count', ascending=False).head(10)  # топ-10 для наглядности
+        df = self.df_global_peak_distribution.sort_values(by='Count', ascending=False).head(10)
 
         plt.figure(figsize=(12, 6))
-        sns.barplot(x=df.index, y='Percent', data=df, palette='viridis')
+        plt.bar(df.index, df['Percent'], color=[self._get_color_for_peak_type(t) for t in df.index])
         plt.title("Распределение типов R-пиков (в % от общего числа)")
         plt.ylabel("Процент")
         plt.xlabel("Тип пика")
         plt.xticks(rotation=45)
         plt.tight_layout()
         plt.savefig(os.path.join(self.temp_dir, "global_peak_distribution.png"))
-        plt.show()        
+        plt.show()
 
     def _visualize_abnormal_peak_ratio(self):
-        """
-        График: доля аномальных пиков по пациентам (в %)
-        """
-
         df = self.df_patient_normal_abnormal_ratio.sort_values(by='Abnormal', ascending=False)
-
+        
         plt.figure(figsize=(14, 8))
-        sns.barplot(x='Patient_id', y='Abnormal', data=df, palette='coolwarm')
+        plt.bar(df['Patient_id'], df['Abnormal'], color='steelblue')
         plt.title("Доля аномальных R-пиков по пациентам")
         plt.ylabel("Процент аномальных пиков")
         plt.xlabel("Пациент ID")
@@ -379,7 +533,7 @@ class DatasetAnalyze:
         plt.axhline(df['Abnormal'].mean(), color='black', linestyle='--', label=f'Среднее: {df["Abnormal"].mean():.1f}%')
         plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(self.temp_dir, "anomaly_per_patient.png"))
+        plt.savefig(os.path.join(self.temp_dir, "abnormal_peak_ratio.png"))
         plt.show()
 
     def _visualize_patient_peak_types_heatmap(self):
@@ -408,46 +562,44 @@ class DatasetAnalyze:
     def _get_color_for_peak_type(self, peak_type, mode='full'):
         """
         Возвращает цвет для типа события.
-        Если mode='reduced' → возвращает цвет по группе: Normal/Abnormal/Noise
+        Если mode='reduced' → возвращает цвет по группе: Normal / Abnormal / BBB / Noise
         """
+
         full_color_map = {
-            'N': '#4CAF50',             # зелёный
-            'V': '#F44336',             # красный
-            'A': '#2196F3',             # синий
-            'F': '#FF9800',             # оранжевый
-            'J': '#9C27B0',             # фиолетовый
-            'S': '#FFEB3B',             # жёлтый
-            '/': '#E91E63',             # розовый
-            'Q': '#9E9E9E',             # серый
-            'L': '#03A9F4',             # голубой
-            'R': '#00BCD4',             # циан
-            '+': '#FF5722',             # deep orange
-            '~': '#795548',             # brown
-            'other': '#EEEEEE'          # светло-серый для остального
+            'N': '#4CAF50',     # зелёный
+            'V': '#F44336',     # красный
+            'A': '#2196F3',     # синий
+            'F': '#FF9800',     # оранжевый
+            'J': '#9C27B0',     # фиолетовый
+            'S': '#FFEB3B',     # жёлтый
+            '/': '#E91E63',     # розовый
+            'Q': '#9E9E9E',     # серый
+            'L': '#03A9F4',     # голубой
+            'R': '#00BCD4',     # циан
+            '+': '#FF5722',     # deep orange
+            '~': '#795548',     # brown
+            '[': '#795548',     # brown
+            '!': '#795548',     # brown
+            ']': '#795548',
+            '"': '#795548',
+            '?': '#795548',
+            'x': '#795548',
+            'f': '#795548',
+            'other': '#EEEEEE'
         }
 
         reduced_color_map = {
-            'Normal': '#4CAF50',        # зелёный
-            'Abnormal': '#F44336',      # красный
-            'BBB': '#03A9F4',           # синий (bundle branch blocks)
-            'Noise': '#FF5722'          # deep orange
+            'Normal': '#4CAF50',  # зелёный
+            'Abnormal': '#F44336',  # красный
+            'BBB': '#03A9F4',   # голубой
+            'Noise': '#FF5722'   # deep orange
         }
 
         if mode == 'full':
-            return full_color_map.get(peak_type, '#DDDDDD')  # default — светло-серый
-
+            return full_color_map.get(peak_type, '#DDDDDD')
         elif mode == 'reduced':
-            if peak_type in ['N']:
-                return reduced_color_map['Normal']
-            elif peak_type in ['V', 'A', 'F', 'J', 'S', 'E', 'Q']:
-                return reduced_color_map['Abnormal']
-            elif peak_type in ['L', 'R']:
-                return reduced_color_map['BBB']
-            elif peak_type in ['+', '/', '~', '[', '!', ']', '"', '?', 'x', 'f']:
-                return reduced_color_map['Noise']
-            else:
-                return '#DDDDDD'
-
+            # Сопоставляем конкретные типы с категориями
+            return reduced_color_map[peak_type]
         else:
             raise ValueError(f"Неизвестный режим: {mode}")
 
@@ -533,16 +685,21 @@ class DatasetAnalyze:
         plt.tight_layout()
 
         # --- Легенда зависит от режима ---
+        legend_patches = []
+
         if mode == 'full':
-            legend_items = sorted(self.df_all_annotations['Type'].unique())
-        else:
-            legend_items = ['Normal', 'Abnormal', 'Noise']
+            used_types = df.filter(like='Type_', axis=1).apply(pd.Series.unique).values[0]
+            for t in sorted(set(used_types)):
+                if pd.isna(t) or t == '-':
+                    continue
+                color = self._get_color_for_peak_type(t, mode='full')
+                legend_patches.append(plt.Rectangle((0, 0), 1, 1, color=color, label=t))
 
-        legend_patches = [
-            plt.Rectangle((0, 0), 1, 1, color=self._get_color_for_peak_type(t, mode=mode), label=t)
-            for t in legend_items if self._get_color_for_peak_type(t, mode=mode) is not None
-        ]
-
+        elif mode == 'reduced':
+            for t in ['Normal', 'Abnormal', 'BBB', 'Noise']:
+                color = self._get_color_for_peak_type(t, mode='reduced')
+                legend_patches.append(plt.Rectangle((0, 0), 1, 1, color=color, label=t))
+            
         plt.legend(
             handles=legend_patches,
             title="Типы событий",
@@ -571,3 +728,67 @@ class DatasetAnalyze:
         plt.tight_layout()
         plt.savefig(os.path.join(self.temp_dir, "top_anomalies_pie.png"))
         plt.show()
+
+    def _filter_dataframes(self):
+        """
+        Формирует датафреймы сигналов и аннотаций по двум каналам:
+            - self.df_top_signals / self.df_top_annotations → обучение на основном канале (target_channel_name_1)
+            - self.df_cross_signals / self.df_cross_annotations → тестирование на втором канале (target_channel_name_2)
+            - self.df_united_signals_1 / self.df_united_annotation_1 → данные для модели 1
+            - self.df_united_signals_2 / self.df_united_annotation_2 → данные для модели 2
+        """
+
+        # Фильтруем по первому каналу
+        self.df_top_signals, self.df_top_annotations = self._filter_df(
+            self.df_all_signals,
+            self.df_all_annotations,
+            self.target_channel_name_1
+        )
+        print(f"Оставлено записей после фильтрации (по {self.target_channel_name_1}): {len(self.df_top_signals)}")
+        print(f"Оставлено аннотаций после фильтрации (по {self.target_channel_name_1}): {len(self.df_top_annotations)}")
+
+        # Фильтруем по второму каналу
+        self.df_cross_signals, self.df_cross_annotations = self._filter_df(
+            self.df_all_signals,
+            self.df_all_annotations,
+            self.target_channel_name_2
+        )
+        print(f"Оставлено записей после фильтрации (по {self.target_channel_name_2}): {len(self.df_cross_signals)}")
+        print(f"Оставлено аннотаций после фильтрации (по {self.target_channel_name_2}): {len(self.df_cross_annotations)}")
+
+        # Находим общих пациентов
+        common_pids = np.intersect1d(
+            self.df_top_signals['Patient_id'].unique(),
+            self.df_cross_signals['Patient_id'].unique()
+        )
+
+        # Двойная фильтрация по первому каналу
+        self.df_united_signals_1 = self.df_top_signals[self.df_top_signals['Patient_id'].isin(common_pids)]
+        self.df_united_annotation_1 = self.df_top_annotations[self.df_top_annotations['Patient_id'].isin(common_pids)]
+
+        # Двойная фильтрация по второму каналу
+        self.df_united_signals_2 =  self.df_cross_signals[self.df_cross_signals['Patient_id'].isin(common_pids)]
+        self.df_united_annotation_2 =  self.df_cross_annotations[self.df_cross_annotations['Patient_id'].isin(common_pids)]
+        print(f"Оставлено записей после 2-ной фильтрации (по {self.target_channel_name_1} и {self.target_channel_name_2}): {len(self.df_united_signals_1)}")
+        print(f"Оставлено аннотаций после 2-ной фильтрации (по {self.target_channel_name_1} и {self.target_channel_name_2}): {len(self.df_united_annotation_1)}")
+
+    def _filter_df(self, df_s, df_a, channel):
+        """
+        Фильтрует сигналы и аннотации по наличию данных в указанном канале.
+
+        :param df_s: исходный датафрейм сигналов (pd.DataFrame)
+        :param df_a: исходный датафрейм аннотаций (pd.DataFrame)
+        :param channel: название канала для фильтрации (например 'MLII', 'V1')
+        :return: df_filtered_s, df_filtered_a
+        """
+
+        # Фильтруем сигналы по наличию данных в целевом канале
+        df_filtered_s = (df_s[df_s[channel].notna()][['Sample', channel, 'Patient_id']])
+
+        # Получаем уникальные pid из отфильтрованных сигналов
+        valid_pids = df_filtered_s['Patient_id'].unique()
+
+        # Фильтруем аннотации
+        df_filtered_a = df_a[df_a['Patient_id'].isin(valid_pids)]
+
+        return df_filtered_s, df_filtered_a

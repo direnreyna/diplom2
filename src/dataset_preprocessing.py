@@ -47,12 +47,12 @@ class DatasetPreprocessing():
     def load_dataset(self):
         """Загрузка датасета"""
         loader = DatasetLoading()
-        self.df_all_signals, self.df_all_annotations = loader.pipeline()
+        self.df_all_signals, self.df_all_annotations, self.patient_ids = loader.pipeline()
         return self
     
     def analyze_channels(self):
         """Анализ датасета"""
-        analyzer = DatasetAnalyze(self.df_all_signals, self.df_all_annotations)
+        analyzer = DatasetAnalyze(self.df_all_signals, self.df_all_annotations, self.patient_ids)
         (self.df_top_signals,
         self.df_top_annotations, 
         self.df_cross_signals, 
