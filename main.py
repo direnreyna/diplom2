@@ -9,30 +9,34 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from config import config
 
 from file_management import FileManagement
-from dataset_preparer import DatasetPreparation
+from dataset_loading import DatasetLoading
+from dataset_analyzer import DatasetAnalyze
+from dataset_preparing import DatasetPreparing
 from model_trainer import ModelTraining
 from model_producer import Production
 
 # Подготовка файлов
 manager = FileManagement()
-file_list = manager.pipeline()
-	## выбор входящей директории, по умолчанию - папка INPUT в текущем каталоге (см. конфиг).
-	## распаковка архивов
-	## преоборазование файлов
-	## удаление ненужных файлов
-	## складирование нужных файлов в спец. директорию.
+manager.pipeline()
+
+# Загрузка датасета
+loader = DatasetLoading()
+df_x, df_y = loader.pipeline()
+
+# Анализ датасета
+analyzer = DatasetAnalyze(df_x, df_y)
+(df_top_signals, df_top_annotations, 
+df_cross_signals, df_cross_annotations, 
+df_united_signals_1, df_united_annotation_1, 
+df_united_signals_2, df_united_annotation_2) = analyzer.pipeline()
 
 # Подготовка датасета
-preparer = DatasetPreparation()
-(x_train, y_train, x_val, y_val, x_test, y_test) = preparer.pipeline(file_list)
-	## загрузка датасета из файлов по списку file_list
-	## сбор DF
-	## получение дополнительных параметров:
-	## 	типа скорости и ускорения изменения основных характеристик,
-	## 	получение карт R-пиков и т.д.
-	## label-классификация, перевод в ohe
-	## нормирование/стандартизирование
-	## разделение X, y на выборки x_train, y_train, x_val, y_val, x_test, y_test
+preparer = DatasetPreparing(
+    df_top_signals, df_top_annotations, 
+	df_cross_signals, df_cross_annotations, 
+	df_united_signals_1, df_united_annotation_1, 
+	df_united_signals_2, df_united_annotation_2)
+(x_train, y_train, x_val, y_val, x_test, y_test) = preparer.pipeline()
 
 # Обучение модели
 trainer = ModelTraining()
