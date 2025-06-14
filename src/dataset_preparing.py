@@ -6,7 +6,7 @@ import pandas as pd
 
 from tqdm import tqdm
 from config import config
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
@@ -23,8 +23,8 @@ class DatasetPreparing:
 	    df_united_signals_2: pd.DataFrame,
         df_united_annotation_2: pd.DataFrame) -> None:
 
-        self.target_channel_name_1 = target_channel_name_1,     # Имя основного канала для обучения (например, 'MLII')     
-        self.target_channel_name_2 = target_channel_name_2,     # Имя второго канала для сравнения (например, 'V1')
+        self.target_channel_name_1 = target_channel_name_1      # Имя основного канала для обучения (например, 'MLII')     
+        self.target_channel_name_2 = target_channel_name_2      # Имя второго канала для сравнения (например, 'V1')
             
         self.df_top_signals = df_top_signals                    # Отфильтрованные сигналы для формирования ДС по 1 топ-каналу
         self.df_top_annotations = df_top_annotations            # Аннотации для формирования ДС по 1 топ-каналу
@@ -66,17 +66,46 @@ class DatasetPreparing:
 
     def _create_dataset(self, df_sign: pd.DataFrame, df_anno: pd.DataFrame, channel: str) -> Tuple:
         # формируем окна
-        X, y = self._create_windows_and_labels(df_sign, df_anno, channel)
+        X_windowed, y = self._create_windows_and_labels(df_sign, df_anno, channel)
 
+        ### print("После _create_windows_and_labels:")
+        ### print("X_windowed shape:", X_windowed.shape)
+        ### print("y shape:", y.shape)
+        ### print("Unique labels in y after windowing:", np.unique(y))
+        ### if len(X_windowed) == 0 or len(y) == 0:
+        ###     raise ValueError("Сформированные данные пусты. Ошибка на этапе создания окон.")
+        
         # добавляем производные (если указано)
         if config['data']['add_derivatives']:
-            X = self._add_derivatives_to_windows(X)
+            X_augmented = self._add_derivatives_to_windows(X_windowed)
+        else:
+            X_augmented = X_windowed
+
+        ### print("После _add_derivatives_to_windows:")
+        ### print("X_augmented shape:", X_augmented.shape)
+        ### if len(X_augmented) == 0:
+        ###     raise ValueError("Данные стали пустыми после добавления производных.")
 
         # разделение на выборки
-        X_train, y_train, X_val, y_val, X_test, y_test = self._split_dataset(X, y)
+        X_train, y_train, X_val, y_val, X_test, y_test = self._split_dataset(X_augmented, y)
 
+        ### rint("После _split_dataset:")
+        ### rint("X_train shape:", X_train.shape)
+        ### rint("X_val shape:", X_val.shape)
+        ### rint("X_test shape:", X_test.shape)
+        ### rint("y_train unique:", np.unique(y_train))
+        ### rint("y_val unique:", np.unique(y_val))
+        ### rint("y_test unique:", np.unique(y_test))
+        ### f len(X_train) == 0 or len(X_val) == 0 or len(X_test) == 0:
+        ###    raise ValueError("Одна из выборок оказалась пустой после разбиения.")
+        
         # нормализация окон по слоям
         X_train_norm, X_val_norm, X_test_norm = self._normalize_windows(X_train, X_val, X_test)
+
+        ### print("После нормализации:")
+        ### print("X_train_norm shape:", X_train_norm.shape)
+        ### print("X_val_norm shape:", X_val_norm.shape)
+        ### print("X_test_norm shape:", X_test_norm.shape)
 
         print("Выборка сформирована")
         return X_train_norm, y_train, X_val_norm, y_val, X_test_norm, y_test
@@ -97,37 +126,55 @@ class DatasetPreparing:
         window_size = config['data']['window_size']  # например, 360
         half_window = window_size // 2
 
-        X = []
+        x_win = []
         y = []
 
+        ### print("Входные данные в _create_windows_and_labels:")
+        ### print("df_signals shape:", df_signals.shape)
+        ### print("df_annotations shape:", df_annotations.shape)
+        ### print("target_channel:", target_channel)
+        
         for pid in tqdm(df_annotations['Patient_id'].unique(), desc="Формируем окна"):
             # Выбираем данные пациента
             df_p_signal = df_signals[df_signals['Patient_id'] == pid]
             df_p_annotation = df_annotations[df_annotations['Patient_id'] == pid]
 
+            ### print(f"Обрабатываем Patient_id: {pid}")
+            ### print("df_p_signal shape:", df_p_signal.shape)
+            ### print("df_p_annotation shape:", df_p_annotation.shape)
+
             # Для каждой аннотации у этого пациента
             for _, row in df_p_annotation.iterrows():
+                ### print(f">>>> row = {row}\n")
                 sample = row['Sample']
                 start = sample - half_window
                 end = sample + half_window
 
                 # Извлекаем участок сигнала
-                window = df_p_signal[(df_p_signal['Sample'] >= start) & (df_p_signal['Sample'] <= end)]
-
+                window = df_p_signal[(df_p_signal['Sample'] >= start) & (df_p_signal['Sample'] < end)]
+                ### print(f">>>> len(window) = {len(window)}")
+                
                 # Избавляемся от неполных окон по краям набора данных
                 if len(window) != window_size:
                     continue
 
                 signal_values = window[target_channel].values
-                X.append(signal_values)
-
+                x_win.append(signal_values)
+                ### print(f">>>> len(x_win) = {len(x_win)}")
                 # Формируем метку
                 if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
                     y.append(0)  # "Good"
                 else:
                     y.append(1)  # "Alert"
 
-        return np.array(X), np.array(y)
+        ### print("Количество сформированных окон:", len(x_win))
+        ### print("Unique меток в y:", np.unique(y))
+        if len(x_win) == 0:
+            raise ValueError("Не удалось создать ни одного окна. Возможно, неверный размер окна или фильтрация слишком жёсткая.")
+        if len(np.unique(y)) < 2:
+            raise ValueError("Недостаточно уникальных меток для обучения модели.")
+
+        return np.array(x_win), np.array(y)
     
     def _add_derivatives_to_windows(self, X):
         """
@@ -206,15 +253,41 @@ class DatasetPreparing:
                 scaler.fit(X_train[..., i].reshape(-1, 1))
                 scalers.append(scaler)
 
+            ### print(f"X_train.shape перед нормализацией: {X_train.shape}")
+            ### print(f"X_val.shape перед нормализацией: {X_val.shape}")
+            ### print(f"X_test.shape перед нормализацией: {X_test.shape}")
+
             # --- Применяем нормализацию по каждому каналу ---
             X_train_scaled = np.zeros_like(X_train)
             X_val_scaled = np.zeros_like(X_val)
             X_test_scaled = np.zeros_like(X_test)
 
             for i in range(channels):
-                X_train_scaled[..., i] = scalers[i].transform(X_train[..., i].reshape(-1, 1)).flatten()
-                X_val_scaled[..., i] = scalers[i].transform(X_val[..., i].reshape(-1, 1)).flatten()
-                X_test_scaled[..., i] = scalers[i].transform(X_test[..., i].reshape(-1, 1)).flatten()
+                #X_train_scaled[..., i] = scalers[i].transform(X_train[..., i].reshape(-1, 1)).flatten()
+                #X_val_scaled[..., i] = scalers[i].transform(X_val[..., i].reshape(-1, 1)).flatten()
+                #X_test_scaled[..., i] = scalers[i].transform(X_test[..., i].reshape(-1, 1)).flatten()
+
+                ### print(f"Канал {i}. До Norm => X_train[..., {i}].shape = {X_train[..., i].shape}")
+                ### print(f"Канал {i}. До Norm => X_val[..., {i}].shape = {X_val[..., i].shape}")
+                ### print(f"Канал {i}. До Norm => X_test[..., {i}].shape = {X_test[..., i].shape}")
+
+                # Для номрмализации меняем форму на (N, 1), после нормализации меняем на обратную по запомненной форме shape
+                shape_X_train = X_train[..., i].shape
+                shape_X_val = X_val[..., i].shape
+                shape_X_test = X_test[..., i].shape
+
+                ### print(f"Форма shape_X_train = {shape_X_train}")
+                ### print(f"Форма shape_X_val = {shape_X_val}")
+                ### print(f"Форма shape_X_test = {shape_X_test}")
+                
+                X_train_scaled[..., i] = scalers[i].transform((X_train[..., i].reshape(-1, 1))).reshape(shape_X_train)
+                X_val_scaled[..., i] = scalers[i].transform((X_val[..., i].reshape(-1, 1))).reshape(shape_X_val)
+                X_test_scaled[..., i] = scalers[i].transform((X_test[..., i].reshape(-1, 1))).reshape(shape_X_test)
+
+                ### print(f"Канал {i}. После Norm => X_train_scaled[..., {i}].shape = {X_train_scaled[..., i].shape}")
+                ### print(f"Канал {i}. После Norm => X_val_scaled[..., {i}].shape = {X_val_scaled[..., i].shape}")
+                ### print(f"Канал {i}. После Norm => X_test_scaled[..., {i}].shape = {X_test_scaled[..., i].shape}")
+
         # Если 1-канальное (только оригинальные показания):
         else:
             if method == 'standard':
@@ -235,8 +308,10 @@ class DatasetPreparing:
         
         :param prefix: str, например 'top', 'cross', 'united_1', 'united_2'
         """
-        self.dir_to_save = config['data']['data_dir']
-        savefile = os.path.join(self.dir_to_save, f"{prefix}_dataset.npz")
+        dir_to_save = config['paths']['data_dir']
+        os.makedirs(dir_to_save, exist_ok=True)
+
+        savefile = os.path.join(dir_to_save, f"{prefix}_dataset.npz")
         np.savez(savefile,
             X_train=X_train,
             y_train=y_train,

@@ -5,13 +5,10 @@ import sys
 # Добавляем папку src в PYTHONPATH, чтобы можно было импортировать модули
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-#import src.config
-from config import config
-
-from file_management import FileManagement
-from dataset_preprocessing import DatasetPreprocessing
-from model_trainer import ModelTraining
-from model_producer import Production
+from src.file_management import FileManagement
+from src.dataset_preprocessing import DatasetPreprocessing
+from src.model_trainer import ModelTraining
+from src.model_producer import Production
 
 dataframes = []
 # Подготовка файлов

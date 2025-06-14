@@ -14,6 +14,8 @@ from collections import Counter
 class DatasetAnalyze:
     def __init__(self, df_all_signals: pd.DataFrame, df_all_annotations: pd.DataFrame, patient_ids: List) -> None:
         self.temp_dir = config['paths']['temp_dir']
+        self.check_analytics = config['data']['analytics']
+        
         self.patient_ids = patient_ids                          # Список всех ID пациентов (берётся из имён файлов)
         self.df_all_signals = df_all_signals                    # Все сигналы ЭКГ до фильтрации: по всем каналам
         self.df_all_annotations = df_all_annotations            # Все аннотации
@@ -52,30 +54,33 @@ class DatasetAnalyze:
         разделение X, y на выборки x_train, y_train, x_val, y_val, x_test, y_test        
         """
         
-        # Анализ каналов ЭКГ
         self._check_channels_per_patient()                      # Формирует словарь доступных каналов пациенту
         self._analyze_channels_statistics()                     # Выбирает 2 самых популярных канала и выводит статистику по ним
-        self._visualize_channels_per_patient_table()            # Вывод таблицы: какие каналы есть у какого пациента
-        self._visualize_channel_distribution()                  # График: распределение популярности каналов (barplot)
-        self._visualize_patient_channel_matrix()                # Heatmap: матрица наличия каналов по пациентам
+        
+        if self.check_analytics:
+            # Анализ каналов ЭКГ
+            self._visualize_channels_per_patient_table()            # Вывод таблицы: какие каналы есть у какого пациента
+            self._visualize_channel_distribution()                  # График: распределение популярности каналов (barplot)
+            self._visualize_patient_channel_matrix()                # Heatmap: матрица наличия каналов по пациентам
 
-        # Добавление в аннотации ритмов из Aux
+            # Добавление в аннотации ритмов из Aux
         self._add_rhythm_annotations()                          # Добавляет колонку Current_Rhythm в df_all_annotations на основе колонки Aux
-        self._analyze_Current_Rhythm_statistics()               # Формирует общую статистику по Aux-событиям
-        self._analyze_patient_rhythm_type_stats()               # Формирует статистику Aux-событий по каждоиу пациенту
-        self._binary_rhythm_type_analysis()                     # Анализирует баланс нормальных R-пиков в нормальных Aux-событиях
-        self._visualize_global_rhythm_distribution()            # 
-        self._visualize_rhythm_abnormal_distribution()          # 
-        self._visualize_binary_rhythm_analysis()                # 
+        if self.check_analytics:
+            self._analyze_Current_Rhythm_statistics()               # Формирует общую статистику по Aux-событиям
+            self._analyze_patient_rhythm_type_stats()               # Формирует статистику Aux-событий по каждоиу пациенту
+            self._binary_rhythm_type_analysis()                     # Анализирует баланс нормальных R-пиков в нормальных Aux-событиях
+            self._visualize_global_rhythm_distribution()            # 
+            self._visualize_rhythm_abnormal_distribution()          # 
+            self._visualize_binary_rhythm_analysis()                # 
 
-        # Анализ R-пиков и типов событий
-        self._analyze_r_peak_statistics()                       # Формирует статистику по R-пикам и типам событий 
-        self._visualize_global_peak_distribution()              # Pie / barplot: общее распределение типов R-пиков
-        self._visualize_abnormal_peak_ratio()                   # Barplot: процент аномальных пиков на пациента
-        self._visualize_patient_peak_types_heatmap()            # Heatmap: топ-типы пиков у каждого пациента
-        self._visualize_patient_peak_types_bars(mode='full')    # Color-bars: топ-типы пиков у каждого пациента
-        self._visualize_patient_peak_types_bars(mode='reduced') # Color-bars: аггрегированные топ-типы пиков у каждого пациента
-        self._visualize_top_anomalies_pie()                     # Pie chart: самые частые аномалии по пациентам
+            # Анализ R-пиков и типов событий
+            self._analyze_r_peak_statistics()                       # Формирует статистику по R-пикам и типам событий 
+            self._visualize_global_peak_distribution()              # Pie / barplot: общее распределение типов R-пиков
+            self._visualize_abnormal_peak_ratio()                   # Barplot: процент аномальных пиков на пациента
+            self._visualize_patient_peak_types_heatmap()            # Heatmap: топ-типы пиков у каждого пациента
+            self._visualize_patient_peak_types_bars(mode='full')    # Color-bars: топ-типы пиков у каждого пациента
+            self._visualize_patient_peak_types_bars(mode='reduced') # Color-bars: аггрегированные топ-типы пиков у каждого пациента
+            self._visualize_top_anomalies_pie()                     # Pie chart: самые частые аномалии по пациентам
         
         # Формирование окончательных датасетов
         self._filter_dataframes()                               # Формирование итоговых датафреймов под 2 задачи
