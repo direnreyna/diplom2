@@ -235,12 +235,13 @@ class DatasetPreparing:
         :return: нормализованный X
         """
         method = config['data']['normalization']        ## 'standard' или 'minmax'
-        _, _, channels = X_train.shape
+
         scalers =[]
         # --- Нормализация ---
 
         # Если 3-канальное (с производными):
-        if channels == 3:
+        if len(X_train.shape) == 3:
+            _, _, channels = X_train.shape
             for i in range(channels):
                 if method == 'standard':
                     scaler = StandardScaler()

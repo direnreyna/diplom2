@@ -82,10 +82,12 @@ class DatasetLoading:
         prefixes = ['top', 'cross', 'uni_1', 'uni_2']
         dataset_name = config['data']['dataset_name']
         for pr in prefixes:
-            file = pr + "_" + dataset_name
-            dataset_path = config['paths']['temp_dir']
-            file_dataset = os.path.join(dataset_path, file)
+            file_dataset = os.path.join(dataset_path, f"{pr}_{dataset_name}")
+            #print(f"Проверяю наличие файла: [{file_dataset}]")
             if not os.path.exists(file_dataset):
                 exists_all = False
                 break
+            #else:
+                #print(f"Обнаружен файл: {file_dataset}")
+        print(f"Пропускаем сбор датасетов, переходим к обучению...")
         return exists_all

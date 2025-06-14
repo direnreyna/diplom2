@@ -4,15 +4,15 @@ paths:
   temp_dir: "temp"
   source_dir: "src"
   model_dir: "model"
-  best_model: best_model.keras"
+  best_model: "best_model.keras"
   
 params:
-  batch_size: 64
-  epochs: 5
-  patience: 50
+  batch_size: 2048
+  epochs: 300
+  patience: 300
 
 data:
-  add_derivatives: True
+  add_derivatives: False
   test_size: 0.15
   val_size: 0.15
   normalization: "minmax"

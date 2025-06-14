@@ -8,7 +8,7 @@ from typing import Tuple
 from config import config
 from tqdm import tqdm
 from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, InputLayer, Activation
+from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, InputLayer, Activation, Conv1D
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
@@ -28,17 +28,34 @@ class ModelTraining:
         
         dataset_name = config['data']['dataset_name']
         file = self.prefix + "_" + dataset_name
-        dataset_path = config['paths']['temp_dir']
+        dataset_path = config['paths']['data_dir']
         file_dataset = os.path.join(dataset_path, file)
         if not os.path.exists(file_dataset):
             raise FileNotFoundError(f"Не обнаружен датасет: {file_dataset}")
         data = np.load(file_dataset)
         return (data['X_train'], data['y_train'], data['X_val'], data['y_val'], data['X_test'], data['y_test'])
     
-    def pipeline(self) -> None:
-        """Полный пайплайн: подготовка модели → обучение → оценка → сохранение"""
+    def pipeline(self, mode : str = 'full') -> None:
+        """
+        Полный пайплайн: подготовка модели → обучение → оценка → сохранение лучшей модели
+
+        :param управляет логикой пайплайна mode:
+            - 'full' (подготовка модели → обучение → оценка → сохранение лучшей модели)
+            - 'eval' (только инференс)
+        """
+        print("Unique labels in y_train:", np.unique(self.y_train, return_counts=True))
+        print("Unique labels in y_val:", np.unique(self.y_val, return_counts=True))
+        print("Unique labels in y_test:", np.unique(self.y_test, return_counts=True))
+        print("X_train min/max:", self.X_train.min(), self.X_train.max())
+        print("X_train sample:\n", self.X_train[0][50:200])  # первые 10 точек
+        ### train_ids = set(df_annotations[df_annotations['Sample'].isin(X_train_samples)]['Patient_id'])
+        ### val_ids = set(df_annotations[df_annotations['Sample'].isin(X_val_samples)]['Patient_id'])
+        ### print("Пересечение пациентов train/val:", train_ids & val_ids)
+
+        """Полный пайплайн: подготовка модели → обучение → оценка → сохранение лучшей модели"""
         self._create_model()
-        self._train_model()
+        if mode == 'full':
+            self._train_model()
         self._evaluate_on_val()
         self.evaluate_model()
 
@@ -46,8 +63,10 @@ class ModelTraining:
         """
         Создает и компилирует модель
         """
+        if len(self.X_train.shape) < 3:
+            self.X_train = np.expand_dims(self.X_train, axis=2)
         input_shape = self.X_train.shape[1:]            # форма экземпляра: (window_size, channels)
-
+       
         # Загрузка сохраненной дообученной модели
         if os.path.exists(self.best_model_file):
             print(f"Загружаем модель с диска: {self.best_model_file}.")
@@ -58,11 +77,23 @@ class ModelTraining:
         print(f"Создаем новую модель.")
         model = Sequential()
         model.add(InputLayer(input_shape=input_shape))
+
+        model.add(Conv1D(64, (3), activation='relu', input_shape=input_shape))
+        model.add(Dropout(0.3))
+
+        model.add(Conv1D(128, (3), activation='relu'))
+        model.add(Dropout(0.3))
+
+        model.add(LSTM(32, return_sequences=True))
+        model.add(Dropout(0.4))
+
         model.add(LSTM(64, return_sequences=False))
         model.add(Dropout(0.4))
+
         model.add(Dense(32))
         model.add(BatchNormalization())
         model.add(Activation('relu'))
+
         model.add(Dense(1, activation='sigmoid'))
 
         model.compile(
@@ -103,6 +134,13 @@ class ModelTraining:
         )
         self.history = history
         self._plot_training_history()
+
+        # Выведем пару случайных окон
+        for i in range(5):
+            z = np.random.randint(1000)
+            plt.plot(self.X_train[i+z])
+            plt.title(f"Label: {self.y_train[i+z]}")
+            plt.show()        
         
         print(f"[{self.prefix}] Обучение модели завершено")
 
@@ -184,3 +222,19 @@ class ModelTraining:
         # Матрица ошибок (опционально)
         cm = confusion_matrix(y_true, y_pred_classes)
         print(f"Матрица ошибок ({dataset_name}):\n", cm)
+
+    def evaluate_on_test(self):
+        print(f"[{self.prefix}] Оценка на тестовой выборке")
+        y_pred = self.model.predict(self.X_test)
+        y_pred_classes = (y_pred > 0.5).astype(int)
+
+        report = classification_report(self.y_test, y_pred_classes, digits=4)
+        print(report)
+
+        cm = confusion_matrix(self.y_test, y_pred_classes)
+        print("Confusion matrix:\n", cm)
+
+        return {
+            'report': report,
+            'confusion_matrix': cm
+        }
