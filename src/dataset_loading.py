@@ -69,3 +69,23 @@ class DatasetLoading:
         print("\nТипы аннотаций:", self.df_all_annotations['Type'].unique())
 
         return self.df_all_signals, self.df_all_annotations, self.patient_ids
+    
+    def check_datasets_exists(self):
+        """
+        Проверяет наличие сохраненных ранее датасетов на диске
+
+        :return:
+            - True/False - если есть все 4 файла
+        """
+        exists_all = True
+        dataset_path = config['paths']['data_dir']
+        prefixes = ['top', 'cross', 'uni_1', 'uni_2']
+        dataset_name = config['data']['dataset_name']
+        for pr in prefixes:
+            file = pr + "_" + dataset_name
+            dataset_path = config['paths']['temp_dir']
+            file_dataset = os.path.join(dataset_path, file)
+            if not os.path.exists(file_dataset):
+                exists_all = False
+                break
+        return exists_all

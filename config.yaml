@@ -3,11 +3,14 @@ paths:
   input_dir: "input"
   temp_dir: "temp"
   source_dir: "src"
-
-params:
-  batch_size: 32
-  epochs: 10
+  model_dir: "model"
+  best_model: best_model.keras"
   
+params:
+  batch_size: 64
+  epochs: 5
+  patience: 50
+
 data:
   add_derivatives: True
   test_size: 0.15
@@ -15,3 +18,4 @@ data:
   normalization: "minmax"
   window_size: 360
   analytics: False
+  dataset_name: "dataset.npz"

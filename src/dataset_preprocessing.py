@@ -75,5 +75,6 @@ class DatasetPreprocessing():
     
     def pipeline(self):
         """Полный пайплайн от загрузки до подготовки (X, y)"""
-        self.load_dataset().analyze_channels().prepare_data()
-        return self.dataset_dict
+        loader = DatasetLoading()
+        if not loader.check_datasets_exists():
+            self.load_dataset().analyze_channels().prepare_data()
