@@ -6,8 +6,8 @@ import zipfile
 import rarfile
 import tarfile
 import py7zr
-from typing import List
-from .config import config
+from typing import List, Tuple
+from config import config
 from tqdm import tqdm  # <-- добавляем прогресс-бар
 
 class FileManagement:
@@ -15,31 +15,42 @@ class FileManagement:
         self.input_dir = config['paths']['input_dir']
         self.temp_dir = config['paths']['temp_dir']
         self.list_files = []
+        self.list_anno = []
         os.makedirs(self.temp_dir, exist_ok=True)
 
-    def pipeline(self) -> List[str]:
+    def pipeline(self) -> None:
         """Подготавливает файлы: распаковывает архивы, копирует файлы .txt, .csv во временную папку."""
 
         self._copy_files_to_temp()                              # Копируем .txt, .csv в self.temp_dir
         #self._extract_archives()                               # Если будут: Распаковываем все архивы в self.temp_dir
-        return self.list_files
 
-    def _copy_files_to_temp(self) -> None:
-        """Копирует в temp_dir все .txt, .csv из self.input_dir (включая подпапки)"""
-        
-        # Собираем все подходящие файлы
-        all_files = []
-        for root, dirs, files in os.walk(self.input_dir):
-            for f in files:
-                if f.lower().endswith(('.csv', '.txt')):
-                    all_files.append(os.path.join(root, f))
+    def _copy_group_files_to_temp(self, list_files: List[str], file_type: str) -> List[str]:
+        """Копирует в self.temp_dir файлы (file_type) по списку из self.input_dir (включая подпапки)"""
+        dest_list_files = []
+        tqdm_text = f"Копирование .{file_type}-файлов."
 
-        # Прогресс-бар для всех файлов сразу
-        for single_file_path in tqdm(all_files, desc="Копирование нужных файлов (.txt, .csv)", unit="файл"):
+        for single_file_path in tqdm(list_files, desc=tqdm_text, unit="файл"):
             base_name = os.path.basename(single_file_path)
             destination_path = os.path.join(self.temp_dir, base_name)
             shutil.copy(single_file_path, destination_path)
-            self.list_files.append(destination_path)
+            dest_list_files.append(destination_path)
+        return dest_list_files
+
+    def _copy_files_to_temp(self) -> None:
+        """Формирует списки скопированных в temp_dir файлов (.txt, .csv) из self.input_dir (включая подпапки)"""
+        
+        all_files = []
+        all_annos = []
+        # Разделяем все файлы по группам
+        for root, dirs, files in os.walk(self.input_dir):
+            for f in files:
+                if f.lower().endswith(('.csv')):
+                    all_files.append(os.path.join(root, f))
+                elif f.lower().endswith(('.txt')):
+                    all_annos.append(os.path.join(root, f))
+
+        self.list_files = self._copy_group_files_to_temp(all_files, 'csv')
+        self.list_anno = self._copy_group_files_to_temp(all_annos, 'txt') 
 
     def _extract_archives(self):
         """

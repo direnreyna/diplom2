@@ -1,13 +1,19 @@
 # dataset_preparing
 
+import os
+import numpy as np
 import pandas as pd
 
+from tqdm import tqdm
 from config import config
-from typing import Tuple
-from collections import Counter
+from typing import Tuple, Dict
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 class DatasetPreparing:
     def __init__(self,
+        target_channel_name_1: str,
+        target_channel_name_2: str,
         df_top_signals: pd.DataFrame,
         df_top_annotations: pd.DataFrame, 
 	    df_cross_signals: pd.DataFrame,
@@ -17,6 +23,9 @@ class DatasetPreparing:
 	    df_united_signals_2: pd.DataFrame,
         df_united_annotation_2: pd.DataFrame) -> None:
 
+        self.target_channel_name_1 = target_channel_name_1,     # Имя основного канала для обучения (например, 'MLII')     
+        self.target_channel_name_2 = target_channel_name_2,     # Имя второго канала для сравнения (например, 'V1')
+            
         self.df_top_signals = df_top_signals                    # Отфильтрованные сигналы для формирования ДС по 1 топ-каналу
         self.df_top_annotations = df_top_annotations            # Аннотации для формирования ДС по 1 топ-каналу
         self.df_cross_signals = df_cross_signals                # Отфильтрованные сигналы для формирования кросс-теста по не топ-каналу
@@ -26,10 +35,214 @@ class DatasetPreparing:
         self.df_united_signals_2 = df_united_signals_2          # Отфильтрованные сигналы для формирования 2го ДС по 2 топ-каналам
         self.df_united_annotation_2 = df_united_annotation_2    # Аннотации для формирования 2го ДС по 2 топ-каналам
 
-    def pipeline(self) -> Tuple:    
+    def pipeline(self) -> Dict:
+        """
+        Основной пайплайн подготовки окон вокруг R-пиков
         
-        # Нормализовать все ДС
-        # Разделить все ДС на train/val/test
+        :param target_channel: str — например, 'MLII'
+        :param normalization: str — 'standard' или 'minmax'
+        :param add_derivatives: bool — добавлять ли производные
+        :return: X_train, y_train, X_val, y_val, X_test, y_test
+        """
+        self.ds = {}
 
-        x_train, y_train, x_val, y_val, x_test, y_test = '', '', '', '', '', ''
-        return (x_train, y_train, x_val, y_val, x_test, y_test)
+        X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top = self._create_dataset(self.df_top_signals, self.df_top_annotations, self.target_channel_name_1)
+        self.ds['top'] = self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, 'top')
+        del X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top
+        
+        X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross = self._create_dataset(self.df_cross_signals, self.df_cross_annotations, self.target_channel_name_2)
+        self.ds['cross'] = self._save_dataset(X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross, 'cross')
+        del X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross
+
+        X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1 = self._create_dataset(self.df_united_signals_1, self.df_united_annotation_1, self.target_channel_name_1)
+        self.ds['uni_1'] = self._save_dataset(X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1, 'uni_1')
+        del X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1
+
+        X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2 = self._create_dataset(self.df_united_signals_2, self.df_united_annotation_2, self.target_channel_name_2)
+        self.ds['uni_2'] = self._save_dataset(X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2, 'uni_2')
+        del X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2
+
+        return self.ds
+
+    def _create_dataset(self, df_sign: pd.DataFrame, df_anno: pd.DataFrame, channel: str) -> Tuple:
+        # формируем окна
+        X, y = self._create_windows_and_labels(df_sign, df_anno, channel)
+
+        # добавляем производные (если указано)
+        if config['data']['add_derivatives']:
+            X = self._add_derivatives_to_windows(X)
+
+        # разделение на выборки
+        X_train, y_train, X_val, y_val, X_test, y_test = self._split_dataset(X, y)
+
+        # нормализация окон по слоям
+        X_train_norm, X_val_norm, X_test_norm = self._normalize_windows(X_train, X_val, X_test)
+
+        print("Выборка сформирована")
+        return X_train_norm, y_train, X_val_norm, y_val, X_test_norm, y_test
+
+    def _create_windows_and_labels(self,
+        df_signals: pd.DataFrame,
+        df_annotations: pd.DataFrame,
+        target_channel: str) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Формирует окна вокруг R-пиков
+        
+        :param df_signals: pd.DataFrame с Sample и каналом target_channel
+        :param df_annotations: pd.DataFrame с Sample и метками Type + Current_Rhythm
+        :param target_channel: str — имя канала, например 'MLII'
+        :return: numpy array (X), numpy array (y)
+        """
+
+        window_size = config['data']['window_size']  # например, 360
+        half_window = window_size // 2
+
+        X = []
+        y = []
+
+        for pid in tqdm(df_annotations['Patient_id'].unique(), desc="Формируем окна"):
+            # Выбираем данные пациента
+            df_p_signal = df_signals[df_signals['Patient_id'] == pid]
+            df_p_annotation = df_annotations[df_annotations['Patient_id'] == pid]
+
+            # Для каждой аннотации у этого пациента
+            for _, row in df_p_annotation.iterrows():
+                sample = row['Sample']
+                start = sample - half_window
+                end = sample + half_window
+
+                # Извлекаем участок сигнала
+                window = df_p_signal[(df_p_signal['Sample'] >= start) & (df_p_signal['Sample'] <= end)]
+
+                # Избавляемся от неполных окон по краям набора данных
+                if len(window) != window_size:
+                    continue
+
+                signal_values = window[target_channel].values
+                X.append(signal_values)
+
+                # Формируем метку
+                if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                    y.append(0)  # "Good"
+                else:
+                    y.append(1)  # "Alert"
+
+        return np.array(X), np.array(y)
+    
+    def _add_derivatives_to_windows(self, X):
+        """
+        Добавляет к каждому окну первую и вторую производную в каждой точке, создавая 2 доп. слоя
+        
+        :param X: numpy array of shape (n_samples, window_size)
+        :return: numpy array of shape (n_samples, window_size, n_features)
+        """
+
+        X_with_derivatives = []
+
+        for signal in X:
+            d1 = np.gradient(signal)
+            d2 = np.gradient(d1)
+            combined = np.stack([signal, d1, d2], axis=-1)  # (window_size, 3)
+            X_with_derivatives.append(combined)
+
+        return np.array(X_with_derivatives)
+
+    def _split_dataset(self, X, y):
+        """
+        Разделяет данные на train/val/test с сохранением баланса классов
+        
+        :param X: numpy array
+        :param y: numpy array
+        :param test_size: float
+        :param val_size: float
+        :return: X_train, y_train, X_val, y_val, X_test, y_test
+        """
+        test_size=config['data']['test_size']
+        val_size=config['data']['val_size']
+
+        # Сначала выделим тест
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y,
+            test_size=test_size,
+            stratify=y,
+            shuffle=True,
+            random_state=42
+        )
+
+        # Теперь из train выделим val
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train, y_train,
+            test_size=val_size / (1 - test_size),
+            stratify=y_train,
+            shuffle=True,
+            random_state=42
+        )
+
+        return X_train, y_train, X_val, y_val, X_test, y_test
+
+    def _normalize_windows(self, X_train, X_val, X_test):
+        """
+        Нормализует все окна одним из методов
+        
+        :param X: numpy array (n_samples, window_size) или (n_samples, window_size, n_channels)
+        :return: нормализованный X
+        """
+        method = config['data']['normalization']        ## 'standard' или 'minmax'
+        _, _, channels = X_train.shape
+        scalers =[]
+        # --- Нормализация ---
+
+        # Если 3-канальное (с производными):
+        if channels == 3:
+            for i in range(channels):
+                if method == 'standard':
+                    scaler = StandardScaler()
+                elif method == 'minmax':
+                    scaler = MinMaxScaler()
+                else:
+                    raise ValueError(f"Неизвестный метод нормализации: {method}")
+
+                # Обучаем только на трейне этого канала
+                scaler.fit(X_train[..., i].reshape(-1, 1))
+                scalers.append(scaler)
+
+            # --- Применяем нормализацию по каждому каналу ---
+            X_train_scaled = np.zeros_like(X_train)
+            X_val_scaled = np.zeros_like(X_val)
+            X_test_scaled = np.zeros_like(X_test)
+
+            for i in range(channels):
+                X_train_scaled[..., i] = scalers[i].transform(X_train[..., i].reshape(-1, 1)).flatten()
+                X_val_scaled[..., i] = scalers[i].transform(X_val[..., i].reshape(-1, 1)).flatten()
+                X_test_scaled[..., i] = scalers[i].transform(X_test[..., i].reshape(-1, 1)).flatten()
+        # Если 1-канальное (только оригинальные показания):
+        else:
+            if method == 'standard':
+                scaler = StandardScaler()
+            elif method == 'minmax':
+                scaler = MinMaxScaler()
+            else:
+                raise ValueError(f"Неизвестный метод нормализации: {method}")
+
+            X_train_scaled = scaler.fit_transform(X_train)
+            X_val_scaled = scaler.transform(X_val)
+            X_test_scaled = scaler.transform(X_test)
+        return X_train_scaled, X_val_scaled, X_test_scaled
+
+    def _save_dataset(self, X_train, y_train, X_val, y_val, X_test, y_test, prefix):
+        """
+        Сохраняет датасет на диск с префиксом
+        
+        :param prefix: str, например 'top', 'cross', 'united_1', 'united_2'
+        """
+        self.dir_to_save = config['data']['data_dir']
+        savefile = os.path.join(self.dir_to_save, f"{prefix}_dataset.npz")
+        np.savez(savefile,
+            X_train=X_train,
+            y_train=y_train,
+            X_val=X_val,
+            y_val=y_val,
+            X_test=X_test,
+            y_test=y_test
+        )
+        return savefile

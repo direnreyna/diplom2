@@ -1,9 +1,16 @@
 paths:
-  input_dir: "data/input"
-  temp_dir: "data/temp"
-  output_dir: "data/output"
+  data_dir: "data"
+  input_dir: "input"
+  temp_dir: "temp"
   source_dir: "src"
 
 params:
   batch_size: 32
   epochs: 10
+  
+data:
+  add_derivatives: True
+  test_size: 0.15
+  val_size: 0.15
+  normalization: "minmax"
+  window_size: 360

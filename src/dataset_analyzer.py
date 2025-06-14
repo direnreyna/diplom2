@@ -81,6 +81,8 @@ class DatasetAnalyze:
         self._filter_dataframes()                               # Формирование итоговых датафреймов под 2 задачи
 
         return (
+            self.target_channel_name_1,
+            self.target_channel_name_2,
             self.df_top_signals, 
             self.df_top_annotations, 
             self.df_cross_signals, 

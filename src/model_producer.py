@@ -1,7 +1,7 @@
 # model_producer.py
 
 import os
-from .config import config
+from config import config
 from tqdm import tqdm  # <-- добавляем прогресс-бар
 
 class Production:

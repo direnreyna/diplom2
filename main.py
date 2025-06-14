@@ -20,11 +20,11 @@ manager.pipeline()
 
 # Подготовка датасета
 preprocessor = DatasetPreprocessing()
-(x_train, y_train, x_val, y_val, x_test, y_test) = preprocessor.pipeline()
+dataset_dict = preprocessor.pipeline()
 
 # Обучение модели
-trainer = ModelTraining()
-trainer.pipeline(x_train, y_train, x_val, y_val, x_test, y_test)
+trainer = ModelTraining(dataset_dict)
+trainer.pipeline()
 
 # Инференс модели
 producer = Production()
