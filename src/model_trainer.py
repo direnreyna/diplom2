@@ -26,6 +26,7 @@ class ModelTraining:
         
         self.best_model_file = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model']}")                ## Сохраненная модель
         self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model_weights']}") ## Сохраненные веса
+        #self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{self.stage}_{config['paths']['best_model_weights']}") ## Сохраненные веса
         
         self.X_train, self.y_train, self.X_val, self.y_val, self.X_test, self.y_test = self.load_dataset()
         num_classes = len(np.unique(self.y_train))      # 2: Good (0), Alert (1)

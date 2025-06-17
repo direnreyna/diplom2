@@ -12,6 +12,7 @@ class DatasetPreprocessing():
     def __init__(self):
         self.temp_dir = config['paths']['temp_dir']
         self.patient_ids = []
+        self.stage = ''
 
         # === Данные до фильтрации ===
         self.df_all_signals = pd.DataFrame()

@@ -16,7 +16,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Скрывает INFO/WARNING от T
 import tensorflow as tf
 print("GPU доступен:", tf.config.list_physical_devices('GPU'))
 
-### dataframes = []
 # Подготовка файлов
 manager = FileManagement()
 manager.pipeline()

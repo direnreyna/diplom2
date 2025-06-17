@@ -75,7 +75,7 @@ class DatasetAnalyze:
             self._binary_rhythm_type_analysis()                                 # Анализирует баланс нормальных R-пиков в нормальных Aux-событиях
             self._visualize_global_rhythm_distribution()                        # 
             self._visualize_rhythm_abnormal_distribution()                      # 
-            self._visualize_binary_rhythm_analysis()                            # 
+            self._visualize_binary_rhythm_analysis()                            # Визуализирует баланс нормальных R-пиков в нормальных Aux-событиях
 
             # Анализ R-пиков и типов событий
             self._analyze_r_peak_statistics()                                   # Формирует статистику по R-пикам и типам событий 
@@ -87,7 +87,7 @@ class DatasetAnalyze:
             self._visualize_top_anomalies_pie()                                 # Pie chart: самые частые аномалии по пациентам
         
         # 2я стадия выделение датафреймов без N+N R-пиков
-        self._filter_dataframes_for_stage_2()                               # создает self.df2_all_signals и self.df2_all_annotations
+        self._create_dataframes_for_stage_2()                               # создает self.df2_all_signals и self.df2_all_annotations
 
         # Анализ R-пиков и типов событий
         self._analyze_Current_Rhythm_statistics(self.df2_all_annotations)   # Формирует общую статистику по Aux-событиям
@@ -867,9 +867,10 @@ class DatasetAnalyze:
         plt.savefig(os.path.join(self.temp_dir, "top_anomalies_pie.png"))
         plt.show()
 
-    def _filter_dataframes_for_stage_2(self):
+    def _create_dataframes_for_stage_2(self):
         """
-        Создает новые датафреймы для 2й стадии выполнения задач (без "N+N" R-пиков)
+        Создает новый датафрейм для 2й стадии выполнения задач (без "N+N" R-пиков):
+        self.df2_all_annotations
         """
         is_sampe_n = self.df_all_annotations['Type'] == 'N'
         is_rhythm_n = self.df_all_annotations['Current_Rhythm'] == 'N'
@@ -879,9 +880,53 @@ class DatasetAnalyze:
         #Датафрейм df2_all_annotations для анализа для 2й стадии
         self.df2_all_annotations = self.df_all_annotations[~mask_n_n]
 
+    ###def _filter_dataframes_for_stage2(self):
+    ###    """
+    ###    Формирует для 2й стадии датафреймы сигналов и аннотаций по двум каналам :
+    ###        - self.df2_top_signals / self.df2_top_annotations → обучение на основном канале (target_channel_name_1)
+    ###        - self.df_cross_signals / self.df_cross_annotations → тестирование на втором канале (target_channel_name_2)
+    ###        - self.df_united_signals_1 / self.df_united_annotation_1 → данные для модели 1
+    ###        - self.df_united_signals_2 / self.df_united_annotation_2 → данные для модели 2
+    ###    """
+    ###
+    ###    # Фильтруем по первому каналу
+    ###    self.df_top_signals, self.df_top_annotations = self._filter_df(
+    ###        self.df_all_signals,
+    ###        self.df_all_annotations,
+    ###        self.target_channel_name_1
+    ###    )
+    ###    print(f"Оставлено записей после фильтрации (по {self.target_channel_name_1}): {len(self.df_top_signals)}")
+    ###    print(f"Оставлено аннотаций после фильтрации (по {self.target_channel_name_1}): {len(self.df_top_annotations)}")
+    ###
+    ###    # Фильтруем по второму каналу
+    ###    self.df_cross_signals, self.df_cross_annotations = self._filter_df(
+    ###        self.df_all_signals,
+    ###        self.df_all_annotations,
+    ###        self.target_channel_name_2
+    ###    )
+    ###    print(f"Оставлено записей после фильтрации (по {self.target_channel_name_2}): {len(self.df_cross_signals)}")
+    ###    print(f"Оставлено аннотаций после фильтрации (по {self.target_channel_name_2}): {len(self.df_cross_annotations)}")
+    ###
+    ###    # Находим общих пациентов
+    ###    common_pids = np.intersect1d(
+    ###        self.df_top_signals['Patient_id'].unique(),
+    ###        self.df_cross_signals['Patient_id'].unique()
+    ###    )
+    ###
+    ###    # Двойная фильтрация по первому каналу
+    ###    self.df_united_signals_1 = self.df_top_signals[self.df_top_signals['Patient_id'].isin(common_pids)]
+    ###    self.df_united_annotation_1 = self.df_top_annotations[self.df_top_annotations['Patient_id'].isin(common_pids)]
+    ###
+    ###    # Двойная фильтрация по второму каналу
+    ###    self.df_united_signals_2 =  self.df_cross_signals[self.df_cross_signals['Patient_id'].isin(common_pids)]
+    ###    self.df_united_annotation_2 =  self.df_cross_annotations[self.df_cross_annotations['Patient_id'].isin(common_pids)]
+    ###    print(f"Оставлено записей после 2-ной фильтрации (по {self.target_channel_name_1} и {self.target_channel_name_2}): {len(self.df_united_signals_1)}")
+    ###    print(f"Оставлено аннотаций после 2-ной фильтрации (по {self.target_channel_name_1} и {self.target_channel_name_2}): {len(self.df_united_annotation_1)}")
+
+
     def _filter_dataframes(self):
         """
-        Формирует датафреймы сигналов и аннотаций по двум каналам:
+        Формирует для 1й стадии датафреймы сигналов и аннотаций по двум каналам:
             - self.df_top_signals / self.df_top_annotations → обучение на основном канале (target_channel_name_1)
             - self.df_cross_signals / self.df_cross_annotations → тестирование на втором канале (target_channel_name_2)
             - self.df_united_signals_1 / self.df_united_annotation_1 → данные для модели 1

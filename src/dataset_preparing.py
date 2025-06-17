@@ -62,9 +62,16 @@ class DatasetPreparing:
         self.ds['uni_2'] = self._save_dataset(X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2, 'uni2', 'stage1')
         del X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2
 
+
+        # X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top = self._create_dataset(self.df_top_signals, self.df_top_annotations, self.target_channel_name_1)
+        # self.ds['top'] = self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, 'top', 'stage1')
+        # del X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top
+        
+
         return self.ds
 
-    def _create_dataset(self, df_sign: pd.DataFrame, df_anno: pd.DataFrame, channel: str) -> Tuple:
+    def _create_dataset(self, df_sign: pd.DataFrame, df_anno: pd.DataFrame, channel: str, stage: str) -> Tuple:
+        self.stage = stage
         # формируем окна
         X_windowed, y = self._create_windows_and_labels(df_sign, df_anno, channel)
 
@@ -122,7 +129,9 @@ class DatasetPreparing:
         :param target_channel: str — имя канала, например 'MLII'
         :return: numpy array (X), numpy array (y)
         """
-
+        if isinstance(channels, str):
+            channels = [channels]
+    
         window_size = config['data']['window_size']  # например, 360
         half_window = window_size // 2
 
@@ -161,11 +170,18 @@ class DatasetPreparing:
                     signal_values = window[target_channel].values
                     x_win.append(signal_values)
                     ### print(f">>>> len(x_win) = {len(x_win)}")
-                    # Формируем метку
-                    if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
-                        y.append(0)  # "Good"
-                    else:
-                        y.append(1)  # "Alert"
+                    # Формируем метку в зависимости от стадии
+                    if self.stage == 'stage1':
+                        if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                            y.append(0)  # "Good" (53%)
+                        else:
+                            y.append(1)  # "Alert" (47%)
+
+                    elif self.stage == 'stage2':
+                        if row['Type'] == 'N':
+                            y.append(0)  # "Attention" (29%)
+                        else:
+                            y.append(1)  # "Alarm" (71%)
 
         ### print("Количество сформированных окон:", len(x_win))
         ### print("Unique меток в y:", np.unique(y))
