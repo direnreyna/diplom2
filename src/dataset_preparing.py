@@ -45,21 +45,22 @@ class DatasetPreparing:
         :return: X_train, y_train, X_val, y_val, X_test, y_test
         """
         self.ds = {}
+        stage = 'stage1'
 
-        X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top = self._create_dataset(self.df_top_signals, self.df_top_annotations, self.target_channel_name_1)
-        self.ds['top'] = self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, 'top', 'stage1')
+        X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top = self._create_dataset(self.df_top_signals, self.df_top_annotations, self.target_channel_name_1, stage)
+        self.ds['top'] = self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, 'top', stage)
         del X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top
         
-        X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross = self._create_dataset(self.df_cross_signals, self.df_cross_annotations, self.target_channel_name_2)
-        self.ds['cross'] = self._save_dataset(X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross, 'cross', 'stage1')
+        X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross = self._create_dataset(self.df_cross_signals, self.df_cross_annotations, self.target_channel_name_2, stage)
+        self.ds['cross'] = self._save_dataset(X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross, 'cross', stage)
         del X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross
 
-        X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1 = self._create_dataset(self.df_united_signals_1, self.df_united_annotation_1, self.target_channel_name_1)
-        self.ds['uni_1'] = self._save_dataset(X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1, 'uni1', 'stage1')
+        X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1 = self._create_dataset(self.df_united_signals_1, self.df_united_annotation_1, self.target_channel_name_1, stage)
+        self.ds['uni_1'] = self._save_dataset(X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1, 'uni1', stage)
         del X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1
 
-        X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2 = self._create_dataset(self.df_united_signals_2, self.df_united_annotation_2, self.target_channel_name_2)
-        self.ds['uni_2'] = self._save_dataset(X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2, 'uni2', 'stage1')
+        X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2 = self._create_dataset(self.df_united_signals_2, self.df_united_annotation_2, self.target_channel_name_2, stage)
+        self.ds['uni_2'] = self._save_dataset(X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2, 'uni2', stage)
         del X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2
 
 
@@ -154,6 +155,21 @@ class DatasetPreparing:
 
                 # Для каждой аннотации у этого пациента
                 for _, row in df_p_annotation.iterrows():
+                    # Формируем метку в зависимости от стадии
+                    if self.stage == 'stage1':
+                        if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                            y.append(0)  # "Good" (53%)
+                        else:
+                            y.append(1)  # "Alert" (47%)
+
+                    elif self.stage == 'stage2':
+                        if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                            continue         # отсев на 1й стадии
+                        elif row['Type'] == 'N' and row['Current_Rhythm'] != 'N':
+                            y.append(0)  # "Attention" (29%)
+                        else:
+                            y.append(1)  # "Alarm" (71%)
+
                     ### print(f">>>> row = {row}\n")
                     sample = row['Sample']
                     start = sample - half_window
@@ -170,18 +186,6 @@ class DatasetPreparing:
                     signal_values = window[target_channel].values
                     x_win.append(signal_values)
                     ### print(f">>>> len(x_win) = {len(x_win)}")
-                    # Формируем метку в зависимости от стадии
-                    if self.stage == 'stage1':
-                        if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
-                            y.append(0)  # "Good" (53%)
-                        else:
-                            y.append(1)  # "Alert" (47%)
-
-                    elif self.stage == 'stage2':
-                        if row['Type'] == 'N':
-                            y.append(0)  # "Attention" (29%)
-                        else:
-                            y.append(1)  # "Alarm" (71%)
 
         ### print("Количество сформированных окон:", len(x_win))
         ### print("Unique меток в y:", np.unique(y))
