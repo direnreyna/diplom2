@@ -5,11 +5,13 @@ paths:
   source_dir: "src"
   model_dir: "model"
   best_model: "best_model.keras"
+  best_model_weights: "best_model.weights.h5"
   
 params:
-  batch_size: 2048
-  epochs: 300
-  patience: 300
+  batch_size: 1024
+  epochs: 2000
+  patience: 2000
+  learning_rate: 0.001
 
 data:
   add_derivatives: False
@@ -19,3 +21,4 @@ data:
   window_size: 360
   analytics: False
   dataset_name: "dataset.npz"
+  

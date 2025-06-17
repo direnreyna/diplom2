@@ -77,4 +77,6 @@ class DatasetPreprocessing():
         """Полный пайплайн от загрузки до подготовки (X, y)"""
         loader = DatasetLoading()
         if not loader.check_datasets_exists():
+            ## Временно для теста аналитики
             self.load_dataset().analyze_channels().prepare_data()
+            ## self.load_dataset().analyze_channels()

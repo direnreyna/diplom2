@@ -6,7 +6,7 @@ import pandas as pd
 
 from tqdm import tqdm
 from config import config
-from typing import Tuple, Dict, List
+from typing import Tuple, Dict, Union, List
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
@@ -47,19 +47,19 @@ class DatasetPreparing:
         self.ds = {}
 
         X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top = self._create_dataset(self.df_top_signals, self.df_top_annotations, self.target_channel_name_1)
-        self.ds['top'] = self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, 'top')
+        self.ds['top'] = self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, 'top', 'stage1')
         del X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top
         
         X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross = self._create_dataset(self.df_cross_signals, self.df_cross_annotations, self.target_channel_name_2)
-        self.ds['cross'] = self._save_dataset(X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross, 'cross')
+        self.ds['cross'] = self._save_dataset(X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross, 'cross', 'stage1')
         del X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross
 
         X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1 = self._create_dataset(self.df_united_signals_1, self.df_united_annotation_1, self.target_channel_name_1)
-        self.ds['uni_1'] = self._save_dataset(X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1, 'uni_1')
+        self.ds['uni_1'] = self._save_dataset(X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1, 'uni1', 'stage1')
         del X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1
 
         X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2 = self._create_dataset(self.df_united_signals_2, self.df_united_annotation_2, self.target_channel_name_2)
-        self.ds['uni_2'] = self._save_dataset(X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2, 'uni_2')
+        self.ds['uni_2'] = self._save_dataset(X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2, 'uni2', 'stage1')
         del X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2
 
         return self.ds
@@ -113,7 +113,7 @@ class DatasetPreparing:
     def _create_windows_and_labels(self,
         df_signals: pd.DataFrame,
         df_annotations: pd.DataFrame,
-        target_channel: str) -> Tuple[np.ndarray, np.ndarray]:
+        channels: Union[str, Tuple[str]]) -> Tuple[np.ndarray, np.ndarray]:
         """
         Формирует окна вокруг R-пиков
         
@@ -133,39 +133,39 @@ class DatasetPreparing:
         ### print("df_signals shape:", df_signals.shape)
         ### print("df_annotations shape:", df_annotations.shape)
         ### print("target_channel:", target_channel)
-        
-        for pid in tqdm(df_annotations['Patient_id'].unique(), desc="Формируем окна"):
-            # Выбираем данные пациента
-            df_p_signal = df_signals[df_signals['Patient_id'] == pid]
-            df_p_annotation = df_annotations[df_annotations['Patient_id'] == pid]
+        for target_channel in channels:
+            for pid in tqdm(df_annotations['Patient_id'].unique(), desc="Формируем окна"):
+                # Выбираем данные пациента
+                df_p_signal = df_signals[df_signals['Patient_id'] == pid]
+                df_p_annotation = df_annotations[df_annotations['Patient_id'] == pid]
 
-            ### print(f"Обрабатываем Patient_id: {pid}")
-            ### print("df_p_signal shape:", df_p_signal.shape)
-            ### print("df_p_annotation shape:", df_p_annotation.shape)
+                ### print(f"Обрабатываем Patient_id: {pid}")
+                ### print("df_p_signal shape:", df_p_signal.shape)
+                ### print("df_p_annotation shape:", df_p_annotation.shape)
 
-            # Для каждой аннотации у этого пациента
-            for _, row in df_p_annotation.iterrows():
-                ### print(f">>>> row = {row}\n")
-                sample = row['Sample']
-                start = sample - half_window
-                end = sample + half_window
+                # Для каждой аннотации у этого пациента
+                for _, row in df_p_annotation.iterrows():
+                    ### print(f">>>> row = {row}\n")
+                    sample = row['Sample']
+                    start = sample - half_window
+                    end = sample + half_window
 
-                # Извлекаем участок сигнала
-                window = df_p_signal[(df_p_signal['Sample'] >= start) & (df_p_signal['Sample'] < end)]
-                ### print(f">>>> len(window) = {len(window)}")
-                
-                # Избавляемся от неполных окон по краям набора данных
-                if len(window) != window_size:
-                    continue
+                    # Извлекаем участок сигнала
+                    window = df_p_signal[(df_p_signal['Sample'] >= start) & (df_p_signal['Sample'] < end)]
+                    ### print(f">>>> len(window) = {len(window)}")
+                    
+                    # Избавляемся от неполных окон по краям набора данных
+                    if len(window) != window_size:
+                        continue
 
-                signal_values = window[target_channel].values
-                x_win.append(signal_values)
-                ### print(f">>>> len(x_win) = {len(x_win)}")
-                # Формируем метку
-                if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
-                    y.append(0)  # "Good"
-                else:
-                    y.append(1)  # "Alert"
+                    signal_values = window[target_channel].values
+                    x_win.append(signal_values)
+                    ### print(f">>>> len(x_win) = {len(x_win)}")
+                    # Формируем метку
+                    if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                        y.append(0)  # "Good"
+                    else:
+                        y.append(1)  # "Alert"
 
         ### print("Количество сформированных окон:", len(x_win))
         ### print("Unique меток в y:", np.unique(y))
@@ -303,16 +303,17 @@ class DatasetPreparing:
             X_test_scaled = scaler.transform(X_test)
         return X_train_scaled, X_val_scaled, X_test_scaled
 
-    def _save_dataset(self, X_train, y_train, X_val, y_val, X_test, y_test, prefix):
+    def _save_dataset(self, X_train, y_train, X_val, y_val, X_test, y_test, prefix, stage):
         """
-        Сохраняет датасет на диск с префиксом
+        Сохраняет датасет на диск с префиксами
         
-        :param prefix: str, например 'top', 'cross', 'united_1', 'united_2'
+        :param prefix: str, например 'top', 'cross', 'uni1', 'uni2'
+        :param stage: str, например 'stage1', 'stage2'            
         """
         dir_to_save = config['paths']['data_dir']
         os.makedirs(dir_to_save, exist_ok=True)
 
-        savefile = os.path.join(dir_to_save, f"{prefix}_dataset.npz")
+        savefile = os.path.join(dir_to_save, f"{prefix}_{stage}_dataset.npz")
         np.savez(savefile,
             X_train=X_train,
             y_train=y_train,

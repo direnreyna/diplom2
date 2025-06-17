@@ -18,7 +18,10 @@ class DatasetAnalyze:
         
         self.patient_ids = patient_ids                          # Список всех ID пациентов (берётся из имён файлов)
         self.df_all_signals = df_all_signals                    # Все сигналы ЭКГ до фильтрации: по всем каналам
-        self.df_all_annotations = df_all_annotations            # Все аннотации
+        self.df_all_annotations = df_all_annotations            # Все аннотации: по всем каналам                                
+
+        # self.df2_all_signals = None                             # Стадия-2 Все сигналы ЭКГ кроме N: по всем каналам                                
+        self.df2_all_annotations = None                         # Все аннотации кроме N: по всем каналам                                
         
         self.channels_per_patient = {}                          # Информация по каждому пациенту: какие каналы доступны, OHE-вектор
         self.target_channel_name_1 = ''                         # Имя основного канала для обучения (например, 'MLII')
@@ -39,6 +42,7 @@ class DatasetAnalyze:
         self.df_patient_normal_abnormal_ratio = pd.DataFrame()  # Процент нормальных / аномальных пиков на пациента
         self.df_patient_top_anomaly = pd.DataFrame()            # Самый частый аномальный пик у каждого пациента + его доля
         self.rhythm_types = {}                                  # Словарь Aux-событий 
+        self.peak_statistics_for_stage2 = pd.DataFrame()        # Распределение R-пиков на 2й стадии (без N+N)
 
         os.makedirs(self.temp_dir, exist_ok=True)
 
@@ -54,36 +58,47 @@ class DatasetAnalyze:
         разделение X, y на выборки x_train, y_train, x_val, y_val, x_test, y_test        
         """
         
-        self._check_channels_per_patient()                      # Формирует словарь доступных каналов пациенту
-        self._analyze_channels_statistics()                     # Выбирает 2 самых популярных канала и выводит статистику по ним
+        self._check_channels_per_patient()                                      # Формирует словарь доступных каналов пациенту
+        self._analyze_channels_statistics()                                     # Выбирает 2 самых популярных канала и выводит статистику по ним
         
         if self.check_analytics:
             # Анализ каналов ЭКГ
-            self._visualize_channels_per_patient_table()            # Вывод таблицы: какие каналы есть у какого пациента
-            self._visualize_channel_distribution()                  # График: распределение популярности каналов (barplot)
-            self._visualize_patient_channel_matrix()                # Heatmap: матрица наличия каналов по пациентам
+            self._visualize_channels_per_patient_table()                        # Вывод таблицы: какие каналы есть у какого пациента
+            self._visualize_channel_distribution()                              # График: распределение популярности каналов (barplot)
+            self._visualize_patient_channel_matrix()                            # Heatmap: матрица наличия каналов по пациентам
 
             # Добавление в аннотации ритмов из Aux
-        self._add_rhythm_annotations()                          # Добавляет колонку Current_Rhythm в df_all_annotations на основе колонки Aux
+        self._add_rhythm_annotations()                                          # Добавляет колонку Current_Rhythm в df_all_annotations на основе колонки Aux
         if self.check_analytics:
-            self._analyze_Current_Rhythm_statistics()               # Формирует общую статистику по Aux-событиям
-            self._analyze_patient_rhythm_type_stats()               # Формирует статистику Aux-событий по каждоиу пациенту
-            self._binary_rhythm_type_analysis()                     # Анализирует баланс нормальных R-пиков в нормальных Aux-событиях
-            self._visualize_global_rhythm_distribution()            # 
-            self._visualize_rhythm_abnormal_distribution()          # 
-            self._visualize_binary_rhythm_analysis()                # 
+            self._analyze_Current_Rhythm_statistics(self.df_all_annotations)    # Формирует общую статистику по Aux-событиям
+            self._analyze_patient_rhythm_type_stats()                           # Формирует статистику Aux-событий по каждоиу пациенту
+            self._binary_rhythm_type_analysis()                                 # Анализирует баланс нормальных R-пиков в нормальных Aux-событиях
+            self._visualize_global_rhythm_distribution()                        # 
+            self._visualize_rhythm_abnormal_distribution()                      # 
+            self._visualize_binary_rhythm_analysis()                            # 
 
             # Анализ R-пиков и типов событий
-            self._analyze_r_peak_statistics()                       # Формирует статистику по R-пикам и типам событий 
-            self._visualize_global_peak_distribution()              # Pie / barplot: общее распределение типов R-пиков
-            self._visualize_abnormal_peak_ratio()                   # Barplot: процент аномальных пиков на пациента
-            self._visualize_patient_peak_types_heatmap()            # Heatmap: топ-типы пиков у каждого пациента
-            self._visualize_patient_peak_types_bars(mode='full')    # Color-bars: топ-типы пиков у каждого пациента
-            self._visualize_patient_peak_types_bars(mode='reduced') # Color-bars: аггрегированные топ-типы пиков у каждого пациента
-            self._visualize_top_anomalies_pie()                     # Pie chart: самые частые аномалии по пациентам
+            self._analyze_r_peak_statistics()                                   # Формирует статистику по R-пикам и типам событий 
+            self._visualize_global_peak_distribution()                          # Pie / barplot: общее распределение типов R-пиков
+            self._visualize_abnormal_peak_ratio()                               # Barplot: процент аномальных пиков на пациента
+            self._visualize_patient_peak_types_heatmap()                        # Heatmap: топ-типы пиков у каждого пациента
+            self._visualize_patient_peak_types_bars(mode='full')                # Color-bars: топ-типы пиков у каждого пациента
+            self._visualize_patient_peak_types_bars(mode='reduced')             # Color-bars: аггрегированные топ-типы пиков у каждого пациента
+            self._visualize_top_anomalies_pie()                                 # Pie chart: самые частые аномалии по пациентам
         
+        # 2я стадия выделение датафреймов без N+N R-пиков
+        self._filter_dataframes_for_stage_2()                               # создает self.df2_all_signals и self.df2_all_annotations
+
+        # Анализ R-пиков и типов событий
+        self._analyze_Current_Rhythm_statistics(self.df2_all_annotations)   # Формирует общую статистику по Aux-событиям
+        self._binary_rhythm_type_analysis_for_stage2(self.df2_all_annotations)  # Анализирует баланс нормальных R-пиков вне нормальных Aux-событиий (стадия 2)
+        self._visualize_global_rhythm_distribution(stage='stage_2_')        # 
+        self._visualize_binary_rhythm_analysis_for_stage2()                 # 
+        self._analyze_peak_statistics_for_stage2()                          # Формирует общую статистику распределению R-пиков на 2й стадии (без N+N)
+        self._visualize_all_peak_types()                                    # Визуализирует общую статистику распределению R-пиков на 2й стадии (без N+N)
+
         # Формирование окончательных датасетов
-        self._filter_dataframes()                               # Формирование итоговых датафреймов под 2 задачи
+        self._filter_dataframes()                                               # Формирование итоговых датафреймов под 2 задачи
 
         return (
             self.target_channel_name_1,
@@ -97,7 +112,7 @@ class DatasetAnalyze:
             self.df_united_signals_2, 
             self.df_united_annotation_2
         )
-    
+
     def _check_channels_per_patient(self):
         """
         Проверяет, какие каналы доступны у каждого пациента.
@@ -255,19 +270,19 @@ class DatasetAnalyze:
 
         #print("Колонка 'Current_Rhythm' добавлена к аннотациям.")
 
-    def _analyze_Current_Rhythm_statistics(self):
+    def _analyze_Current_Rhythm_statistics(self, df_all_annotations):
         """
         Анализирует распределение событий в поле 'Current_Rhythm'
         Формирует статистику: частота встречаемости Current_Rhythm-меток
         """
 
         # --- Убедимся, что 'Current_Rhythm' присутствует ---
-        if 'Current_Rhythm' not in self.df_all_annotations.columns:
+        if 'Current_Rhythm' not in df_all_annotations.columns:
             print("Колонка 'Current_Rhythm' отсутствует в аннотациях")
             return
 
         # Берём только колонку 'Current_Rhythm'
-        rhythm_series = self.df_all_annotations['Current_Rhythm']
+        rhythm_series = df_all_annotations['Current_Rhythm']
 
         # Убираем NaN
         rhythm_series = rhythm_series[rhythm_series.notna()]
@@ -376,7 +391,48 @@ class DatasetAnalyze:
         print("...")
         print(self.df_all_annotations.loc[~mask_normal].head()[['Patient_id', 'Sample', 'Type', 'Current_Rhythm']])
 
-    def _visualize_global_rhythm_distribution(self):
+    def _binary_rhythm_type_analysis_for_stage2(self, df_all_annotations):
+        """
+        Проводит бинарный анализ для 2й стадии:
+            - Категория 0: Type == 'N' → "почти чистая норма"
+            - Категория 1: все остальные случаи → "аномалия"
+        
+        Выводит статистику по всему датасету.
+        """
+
+        if 'Current_Rhythm' not in df_all_annotations.columns:
+            print("Колонка 'Current_Rhythm' отсутствует — невозможно провести бинарный анализ")
+            return
+
+        # --- Подсчёт категорий ---
+        mask_normal_N = (df_all_annotations['Type'] == 'N') & (df_all_annotations['Current_Rhythm'] == 'N')
+        mask_normal = (df_all_annotations['Type'] == 'N') & (df_all_annotations['Current_Rhythm'] != 'N')
+        mask_not_normal = df_all_annotations['Type'] != 'N'
+
+        normal_N_count = mask_normal_N.sum()
+        normal_count = mask_normal.sum()
+        abnormal_count = len(df_all_annotations) - normal_count - normal_N_count
+
+        total = normal_count + abnormal_count + normal_N_count
+
+        percent_normal_N = round((normal_N_count / total) * 100, 2)
+        percent_normal = round((normal_count / total) * 100, 2)
+        percent_abnormal = round((abnormal_count / total) * 100, 2)
+
+        # --- Вывод ---
+        print("\n=== Бинарная статистика ===")
+        print(f"Чисто N+N: {normal_N_count} ({percent_normal_N}%)")
+        print(f"Чисто N (при не-N Aux): {normal_count} ({percent_normal}%)")
+        print(f"Всё остальное (не N): {abnormal_count} ({percent_abnormal}%)\n")
+
+        print("Пример распределения:")
+        print(df_all_annotations.loc[mask_normal_N.head().index, ['Patient_id', 'Sample', 'Type', 'Current_Rhythm']])
+        print("...")
+        print(df_all_annotations.loc[mask_normal.head().index, ['Patient_id', 'Sample', 'Type', 'Current_Rhythm']])
+        print("...")
+        print(df_all_annotations.loc[mask_not_normal].head()[['Patient_id', 'Sample', 'Type', 'Current_Rhythm']])
+
+    def _visualize_global_rhythm_distribution(self, stage=''):
         """
         График: общее распределение ритмов из Current_Rhythm (в процентах)
         """
@@ -390,7 +446,7 @@ class DatasetAnalyze:
         plt.xlabel("Ритм")
         plt.xticks(rotation=45)
         plt.tight_layout()
-        plt.savefig(os.path.join(self.temp_dir, "global_rhythm_distribution.png"))
+        plt.savefig(os.path.join(self.temp_dir, f"{stage}global_rhythm_distribution.png"))
         plt.show()
 
     def _visualize_rhythm_abnormal_distribution(self):
@@ -437,6 +493,81 @@ class DatasetAnalyze:
         plt.axis('equal')  # круглый пирог
         plt.tight_layout()
         plt.savefig(os.path.join(self.temp_dir, "binary_rhythm_analysis_pie.png"))
+        plt.show()
+
+    def _visualize_binary_rhythm_analysis_for_stage2(self):
+        """
+        Pie chart: соотношение 'оставшихся N' к 'не-N' (2 стадия)
+        """
+
+        normal_count = len(self.df2_all_annotations[
+            (self.df2_all_annotations['Type'] == 'N')
+        ])
+
+        abnormal_count = len(self.df2_all_annotations) - normal_count
+
+        labels = ['Условно чистая норма (N)', 'Всё остальное (не-N)']
+        sizes = [normal_count, abnormal_count]
+        colors = ["#1E579D", "#D36907"]
+
+        plt.figure(figsize=(6, 6))
+        plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, colors=colors)
+        plt.title("Баланс 'оставшейся нормы' и 'Всего остального (не-N)'")
+        plt.axis('equal')  # круглый пирог
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.temp_dir, "binary_rhythm_analysis_pie_for_stage2.png"))
+        plt.show()
+
+    def _analyze_peak_statistics_for_stage2(self):
+        """
+        Выводит статистику по R-пикам (столбец 'Type') для 2-й стадии
+        """
+        if self.df2_all_annotations is None:
+            raise ValueError("self.df2_all_annotations не найден — сначала загрузите данные")
+        
+        df = self.df2_all_annotations
+
+        print("\n=== Статистика R-пиков (Stage 2) ===")
+        print("Всего записей на этапе 2:", len(df))
+
+        # Распределение типов пиков
+        type_counts = df['Type'].value_counts()
+        type_percent = df['Type'].value_counts(normalize=True).mul(100).round(2)
+
+        # Объединяем в таблицу
+        self.peak_statistics_for_stage2 = pd.DataFrame({
+            'Count': type_counts,
+            'Percent': type_percent
+        }).reset_index()
+        self.peak_statistics_for_stage2.columns = ['Type', 'Count', 'Percent']
+
+        print("\nРаспределение типов R-пиков:")
+        print(self.peak_statistics_for_stage2)
+
+    def _visualize_all_peak_types(self):
+        """
+        Визуализирует распределение типов R-пиков из self.df_all_annotations
+        """
+
+        plt.figure(figsize=(14, 6))
+        barplot = sns.barplot(x='Type', y='Count', data=self.peak_statistics_for_stage2, palette="viridis")
+   
+        # Подписываем столбцы
+        for index, row in self.peak_statistics_for_stage2.iterrows():
+            barplot.text(
+                index, 
+                row['Count'] + (0.01 * self.peak_statistics_for_stage2['Count'].max()),  # чуть выше столбца
+                f"{row['Percent']}%", 
+                color='black', 
+                ha='center',
+                fontsize=10
+            )        
+        
+        plt.title("Распределение всех типов R-пиков")
+        plt.xlabel("Тип R-пика")
+        plt.ylabel("Количество")
+        plt.xticks(rotation=45)
+        plt.tight_layout()
         plt.show()
 
     def _analyze_r_peak_statistics(self):
@@ -735,6 +866,18 @@ class DatasetAnalyze:
         plt.tight_layout()
         plt.savefig(os.path.join(self.temp_dir, "top_anomalies_pie.png"))
         plt.show()
+
+    def _filter_dataframes_for_stage_2(self):
+        """
+        Создает новые датафреймы для 2й стадии выполнения задач (без "N+N" R-пиков)
+        """
+        is_sampe_n = self.df_all_annotations['Type'] == 'N'
+        is_rhythm_n = self.df_all_annotations['Current_Rhythm'] == 'N'
+        # Маска всех положительных R-пиков, отсеваемых на 1й стадии
+        mask_n_n = is_sampe_n & is_rhythm_n
+        
+        #Датафрейм df2_all_annotations для анализа для 2й стадии
+        self.df2_all_annotations = self.df_all_annotations[~mask_n_n]
 
     def _filter_dataframes(self):
         """

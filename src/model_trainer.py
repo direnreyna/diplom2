@@ -2,8 +2,11 @@
 
 import os
 import numpy as np
+import tensorflow as tf
 import matplotlib.pyplot as plt
 
+from self_attention_block import SelfAttentionBlock
+#from src.layers.self_attention_block import SelfAttentionBlock
 from typing import Tuple
 from config import config
 from tqdm import tqdm
@@ -12,23 +15,29 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, In
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from tensorflow.keras import layers, Model
 
 class ModelTraining:
-    def __init__(self, prefix) -> None:
+    def __init__(self, stage, prefix) -> None:
+        self.stage = stage
         self.prefix = prefix
         self.model = None
         self.history = None
-        self.best_model_file = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model']}")
+        
+        self.best_model_file = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model']}")                ## Сохраненная модель
+        self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model_weights']}") ## Сохраненные веса
+        
         self.X_train, self.y_train, self.X_val, self.y_val, self.X_test, self.y_test = self.load_dataset()
         num_classes = len(np.unique(self.y_train))      # 2: Good (0), Alert (1)
         os.makedirs(config['paths']['model_dir'], exist_ok=True)
 
     def load_dataset(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Загружает уже сохраненный ранее датасет"""
-        
-        dataset_name = config['data']['dataset_name']
-        file = self.prefix + "_" + dataset_name
+
         dataset_path = config['paths']['data_dir']
+        dataset_name = config['data']['dataset_name']
+        file = f"{self.prefix}_{self.stage}_{dataset_name}"
+
         file_dataset = os.path.join(dataset_path, file)
         if not os.path.exists(file_dataset):
             raise FileNotFoundError(f"Не обнаружен датасет: {file_dataset}")
@@ -43,23 +52,14 @@ class ModelTraining:
             - 'full' (подготовка модели → обучение → оценка → сохранение лучшей модели)
             - 'eval' (только инференс)
         """
-        print("Unique labels in y_train:", np.unique(self.y_train, return_counts=True))
-        print("Unique labels in y_val:", np.unique(self.y_val, return_counts=True))
-        print("Unique labels in y_test:", np.unique(self.y_test, return_counts=True))
-        print("X_train min/max:", self.X_train.min(), self.X_train.max())
-        print("X_train sample:\n", self.X_train[0][50:200])  # первые 10 точек
-        ### train_ids = set(df_annotations[df_annotations['Sample'].isin(X_train_samples)]['Patient_id'])
-        ### val_ids = set(df_annotations[df_annotations['Sample'].isin(X_val_samples)]['Patient_id'])
-        ### print("Пересечение пациентов train/val:", train_ids & val_ids)
 
-        """Полный пайплайн: подготовка модели → обучение → оценка → сохранение лучшей модели"""
         self._create_model()
         if mode == 'full':
-            self._train_model()
+            self._train_model()         ## Обучение / Дообучение модели
         self._evaluate_on_val()
         self.evaluate_model()
 
-    def _create_model(self):
+    def _create_model_old(self):
         """
         Создает и компилирует модель
         """
@@ -70,18 +70,22 @@ class ModelTraining:
         # Загрузка сохраненной дообученной модели
         if os.path.exists(self.best_model_file):
             print(f"Загружаем модель с диска: {self.best_model_file}.")
-            self.model = load_model(self.best_model_file)
+            self.model = load_model(
+                self.best_model_file, 
+                custom_objects={'SelfAttentionBlock': SelfAttentionBlock}
+            )
             return
 
-        # Загрузка предобученной модели с сайта
         print(f"Создаем новую модель.")
         model = Sequential()
         model.add(InputLayer(input_shape=input_shape))
 
         model.add(Conv1D(64, (3), activation='relu', input_shape=input_shape))
+        model.add(SelfAttentionBlock(use_projection=True))
         model.add(Dropout(0.3))
 
         model.add(Conv1D(128, (3), activation='relu'))
+        model.add(SelfAttentionBlock(use_projection=True))
         model.add(Dropout(0.3))
 
         model.add(LSTM(32, return_sequences=True))
@@ -97,11 +101,60 @@ class ModelTraining:
         model.add(Dense(1, activation='sigmoid'))
 
         model.compile(
-            optimizer=Adam(learning_rate=0.001),
+            optimizer=Adam(learning_rate=config['params']['learning_rate']),
             loss='binary_crossentropy',
             metrics=['accuracy']
         )
         model.summary()
+        self.model = model
+
+
+    def _create_model(self):
+        """
+        Создает и компилирует модель
+        """
+        if len(self.X_train.shape) < 3:
+            self.X_train = np.expand_dims(self.X_train, axis=2)
+        input_shape = self.X_train.shape[1:]            # форма экземпляра: (window_size, channels)
+
+        print(f"Создаем новую модель.")
+        model = Sequential()
+        model.add(InputLayer(input_shape=input_shape))
+
+        model.add(Conv1D(64, (3), activation='relu', input_shape=input_shape))
+        model.add(SelfAttentionBlock(use_projection=True))
+        model.add(Dropout(0.3))
+
+        model.add(Conv1D(128, (3), activation='relu'))
+        model.add(SelfAttentionBlock(use_projection=True))
+        model.add(Dropout(0.3))
+
+        model.add(LSTM(32, return_sequences=True))
+        model.add(Dropout(0.4))
+
+        model.add(LSTM(64, return_sequences=False))
+        model.add(Dropout(0.4))
+
+        model.add(Dense(32))
+        model.add(BatchNormalization())
+        model.add(Activation('relu'))
+
+        model.add(Dense(1, activation='sigmoid'))
+
+        model.compile(
+            optimizer=Adam(learning_rate=config['params']['learning_rate']),
+            loss='binary_crossentropy',
+            metrics=['accuracy']
+        )
+        model.summary()
+       
+        # Загрузка сохраненной дообученной модели
+        if os.path.exists(self.best_model_file_weights):
+            print(f"Загружаем модель с диска: {self.best_model_file_weights}.")
+            model.load_weights(self.best_model_file_weights)                          ## загружаем только веса
+            # self.model = load_model(self.best_model_file_weights)                   ## загружаем всю модель
+            print("У модели Оптимизатор:", self.model.optimizer.get_config())
+
         self.model = model
 
     def _train_model(self):
@@ -112,9 +165,11 @@ class ModelTraining:
         batch_size=config['params']['batch_size']
         
         best_model = ModelCheckpoint(
-            self.best_model_file,
+            #self.best_model_file,          ## сохраняем всю модель
+            self.best_model_file_weights,   ## сохраняем только веса
             monitor='val_accuracy',
-            save_best_only=True,
+            save_best_only=True,            ## сохраняем лучшую модель...
+            save_weights_only=True,         ## ... при этом только веса
             mode='max',
             verbose=1)
 

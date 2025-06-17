@@ -16,7 +16,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Скрывает INFO/WARNING от T
 import tensorflow as tf
 print("GPU доступен:", tf.config.list_physical_devices('GPU'))
 
-dataframes = []
+### dataframes = []
 # Подготовка файлов
 manager = FileManagement()
 manager.pipeline()
@@ -26,16 +26,16 @@ preprocessor = DatasetPreprocessing()
 preprocessor.pipeline()
 
 # Обучение модели top
-# trainer = ModelTraining('top')
-# trainer.pipeline(mode='full')
+trainer = ModelTraining('stage1', 'top')
+trainer.pipeline(mode='full')
 
 # Оценка модели cross
 # trainer = ModelTraining('cross')
 # trainer.pipeline(mode='eval')
 
 # Обучение модели uni_1
-trainer = ModelTraining('uni_1')
-trainer.pipeline(mode='full')
+# trainer = ModelTraining('uni_1')
+# trainer.pipeline(mode='full')
 
 # Обучение модели uni_2
 # trainer = ModelTraining('uni_2')
