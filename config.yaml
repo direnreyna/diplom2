@@ -23,5 +23,5 @@ data:
   dataset_name: "dataset.npz"
   
 stages:
-  all: stage1, stage2a, stage2 
-  multi: stage2a, stage2
+  all: ["stage1", "stage2a", "stage2"] 
+  multi: ["stage2a", "stage2"]

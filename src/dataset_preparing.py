@@ -83,7 +83,7 @@ class DatasetPreparing:
     def _create_dataset(self, df_sign: pd.DataFrame, df_anno: pd.DataFrame, channel: Union[str, Tuple[str]], stage: str) -> Tuple:
         self.stage = stage
         # формируем окна
-        X_windowed, y = self._create_windows_and_labels(df_sign, df_anno, channel: Union[str, Tuple[str]])
+        X_windowed, y = self._create_windows_and_labels(df_sign, df_anno, channel)
 
         ### print("После _create_windows_and_labels:")
         ### print("X_windowed shape:", X_windowed.shape)
@@ -98,7 +98,7 @@ class DatasetPreparing:
         unique_classes = np.unique(y)
         print(f">>> В датасете присутствуют классы: {unique_classes}")
         
-        if self.stage in self.multi_stages and len(unique_classes) < 3:
+        if self.stage in self.multi_stages and len(unique_classes) < 2:
             raise ValueError("На многоклассовой стадии недостаточно уникальных меток для обучения.")
         
         
@@ -137,7 +137,7 @@ class DatasetPreparing:
         print("Выборка сформирована")
         return X_train_norm, y_train, X_val_norm, y_val, X_test_norm, y_test
 
-    def _is_label_valid_for_stage(self, row: Dict) -> Union[int, None]:
+    def _is_label_valid_for_stage(self, row) -> Union[int, None]:
         """Формируем метку в зависимости от стадии"""
         if self.stage == 'stage1':
             if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
@@ -219,7 +219,7 @@ class DatasetPreparing:
                 return None
 
         elif self.stage == 'stage2':
-            self.num_classes = 11
+            self.num_classes = 7
             if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
                 return None         # отсев на 1й стадии
             elif row['Type'] == 'N' and row['Current_Rhythm'] != 'N':
@@ -265,18 +265,20 @@ class DatasetPreparing:
         y = []
 
         ### print("Входные данные в _create_windows_and_labels:")
+        ### print(f"stage: {self.stage}")
         ### print("df_signals shape:", df_signals.shape)
         ### print("df_annotations shape:", df_annotations.shape)
-        ### print("target_channel:", target_channel)
         for target_channel in channels:
+            ### print(f"target_channel: {target_channel} в {channels}")
+    
             for pid in tqdm(df_annotations['Patient_id'].unique(), desc="Формируем окна"):
                 # Выбираем данные пациента
                 df_p_signal = df_signals[df_signals['Patient_id'] == pid]
                 df_p_annotation = df_annotations[df_annotations['Patient_id'] == pid]
 
                 ### print(f"Обрабатываем Patient_id: {pid}")
-                ### print("df_p_signal shape:", df_p_signal.shape)
-                ### print("df_p_annotation shape:", df_p_annotation.shape)
+                ### print(f"df_p_signal shape: {df_p_signal.shape}, df_p_signal колонки: {df_p_signal.columns}")
+                ### print(f"df_p_annotation shape: {df_p_annotation.shape}, df_p_annotation колонки: {df_p_annotation.columns}")
 
                 # Для каждой аннотации у этого пациента
                 for _, row in df_p_annotation.iterrows():
@@ -287,21 +289,38 @@ class DatasetPreparing:
                     # Извлекаем участок сигнала
                     window = df_p_signal[(df_p_signal['Sample'] >= start) & (df_p_signal['Sample'] < end)]
 
+                    ### print(f"[DEBUG] Sample: {sample}, start: {start}, end: {end}")
+                    ### print(f"[DEBUG] window shape: {window.shape}")
+
                     # Избавляемся от неполных окон по краям набора данных
                     if len(window) != window_size:
                         continue
+
+                    ### print(f">>> [DEBUG] len(window): {len(window)}, window_size: {window_size}")
 
                     ###############################################################
                     # ФОРМИРОВАНИЕ НАБОРА ( LABELS ) 
                     # Проверяем валидность метки для стадии
                     ###############################################################
                     label = self._is_label_valid_for_stage(row)
+
+
+                    ### print("Входные данные в _create_windows_and_labels:")
+                    ### print(f"stage: {self.stage}")
+                    ### print("df_signals shape:", df_signals.shape)
+                    ### print("df_annotations shape:", df_annotations.shape)
+                    ### print(f"target_channel: {target_channel} в {channels}")
+                    ### print(f"[DEBUG out] Type: {row['Type']}, Rhythm: {row.get('Current_Rhythm', None)}, Label: {label}")
+
                     if label is None:
+                        ### print(f"[DEBUG in] Type: {row['Type']}, Rhythm: {row.get('Current_Rhythm', None)}, Label: {label}")
                         continue
+
                     y.append(label)
 
                     signal_values = window[target_channel].values
                     x_win.append(signal_values)
+        ### print(f"Unique labels in y after filtering: {np.unique(y)}")                    
 
         if len(x_win) == 0:
             raise ValueError("Не удалось создать ни одного окна. Возможно, неверный размер окна или фильтрация слишком жёсткая.")
