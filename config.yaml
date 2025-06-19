@@ -9,8 +9,8 @@ paths:
   
 params:
   batch_size: 1024
-  epochs: 2000
-  patience: 2000
+  epochs: 500
+  patience: 100
   learning_rate: 0.001
 
 data:
@@ -22,3 +22,6 @@ data:
   analytics: False
   dataset_name: "dataset.npz"
   
+stages:
+  all: stage1, stage2a, stage2 
+  multi: stage2a, stage2
