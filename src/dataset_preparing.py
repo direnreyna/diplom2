@@ -9,6 +9,7 @@ from config import config
 from typing import Tuple, Dict, Union, List
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from tensorflow.keras.utils import to_categorical
 
 class DatasetPreparing:
     def __init__(self,
@@ -23,6 +24,10 @@ class DatasetPreparing:
 	    df_united_signals_2: pd.DataFrame,
         df_united_annotation_2: pd.DataFrame) -> None:
 
+        self.all_stages = config['stages']['all']
+        self.multi_stages = config['stages']['multi']
+
+        self.num_classes: int                                   # Количество классов для мультикллассовой классификации
         self.target_channel_name_1 = target_channel_name_1      # Имя основного канала для обучения (например, 'MLII')     
         self.target_channel_name_2 = target_channel_name_2      # Имя второго канала для сравнения (например, 'V1')
             
@@ -35,7 +40,7 @@ class DatasetPreparing:
         self.df_united_signals_2 = df_united_signals_2          # Отфильтрованные сигналы для формирования 2го ДС по 2 топ-каналам
         self.df_united_annotation_2 = df_united_annotation_2    # Аннотации для формирования 2го ДС по 2 топ-каналам
 
-    def pipeline(self) -> Dict:
+    def pipeline(self) -> None:
         """
         Основной пайплайн подготовки окон вокруг R-пиков
         
@@ -44,37 +49,41 @@ class DatasetPreparing:
         :param add_derivatives: bool — добавлять ли производные
         :return: X_train, y_train, X_val, y_val, X_test, y_test
         """
-        self.ds = {}
-        stage = 'stage1'
 
-        X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top = self._create_dataset(self.df_top_signals, self.df_top_annotations, self.target_channel_name_1, stage)
-        self.ds['top'] = self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, 'top', stage)
-        del X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top
-        
-        X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross = self._create_dataset(self.df_cross_signals, self.df_cross_annotations, self.target_channel_name_2, stage)
-        self.ds['cross'] = self._save_dataset(X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross, 'cross', stage)
-        del X_train_cross, y_train_cross, X_val_cross, y_val_cross, X_test_cross, y_test_cross
+        for stage in self.all_stages:
+            self._check_create_and_save(self.df_top_signals, self.df_top_annotations, self.target_channel_name_1, stage, 'top')
+            self._check_create_and_save(self.df_cross_signals, self.df_cross_annotations, self.target_channel_name_2, stage, 'cross')
+            self._check_create_and_save(self.df_united_signals_1, self.df_united_annotation_1, self.target_channel_name_1, stage, 'uni1')
+            self._check_create_and_save(self.df_united_signals_2, self.df_united_annotation_2, self.target_channel_name_2, stage, 'uni2')
 
-        X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1 = self._create_dataset(self.df_united_signals_1, self.df_united_annotation_1, self.target_channel_name_1, stage)
-        self.ds['uni_1'] = self._save_dataset(X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1, 'uni1', stage)
-        del X_train_uni_1, y_train_uni_1, X_val_uni_1, y_val_uni_1, X_test_uni_1, y_test_uni_1
+    def _check_create_and_save(self, df_signals, df_annotations, channel, stage, prefix):
+        """
+        Проверяет наличие сохраненного набора датасетов для обучения и валидации модели
+        Если не находит: создает и сохраняет (дифференцированно по каждому датасету)
+        """
+        if not self._is_exsist(stage, prefix):
+            X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top = self._create_dataset(df_signals, df_annotations, channel, stage)
+            self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, prefix, stage)
+            del X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top
 
-        X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2 = self._create_dataset(self.df_united_signals_2, self.df_united_annotation_2, self.target_channel_name_2, stage)
-        self.ds['uni_2'] = self._save_dataset(X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2, 'uni2', stage)
-        del X_train_uni_2, y_train_uni_2, X_val_uni_2, y_val_uni_2, X_test_uni_2, y_test_uni_2
+    def _is_exsist(self, stage, prefix):
+        # Проверка на наличие сохраненного датасета
+        dataset_name = config['data']['dataset_name']
+        dataset_path = config['paths']['data_dir']
+        file_dataset = os.path.join(dataset_path, f"{prefix}_{stage}_{dataset_name}")
 
+        print(f"Проверяю наличие сохраненного датасета: [{file_dataset}]")
+        if os.path.exists(file_dataset):
+            print("Датасет найден. Пропускаю создание.")
+            return True
+        else:
+            print("Датасет не найден. Создаю...")
+            return False
 
-        # X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top = self._create_dataset(self.df_top_signals, self.df_top_annotations, self.target_channel_name_1)
-        # self.ds['top'] = self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, 'top', 'stage1')
-        # del X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top
-        
-
-        return self.ds
-
-    def _create_dataset(self, df_sign: pd.DataFrame, df_anno: pd.DataFrame, channel: str, stage: str) -> Tuple:
+    def _create_dataset(self, df_sign: pd.DataFrame, df_anno: pd.DataFrame, channel: Union[str, Tuple[str]], stage: str) -> Tuple:
         self.stage = stage
         # формируем окна
-        X_windowed, y = self._create_windows_and_labels(df_sign, df_anno, channel)
+        X_windowed, y = self._create_windows_and_labels(df_sign, df_anno, channel: Union[str, Tuple[str]])
 
         ### print("После _create_windows_and_labels:")
         ### print("X_windowed shape:", X_windowed.shape)
@@ -82,6 +91,16 @@ class DatasetPreparing:
         ### print("Unique labels in y after windowing:", np.unique(y))
         ### if len(X_windowed) == 0 or len(y) == 0:
         ###     raise ValueError("Сформированные данные пусты. Ошибка на этапе создания окон.")
+        if len(y) == 0:
+            raise ValueError("Сформированные метки пусты. Ошибка на этапе создания окон.")        
+
+        # Проверка числа классов
+        unique_classes = np.unique(y)
+        print(f">>> В датасете присутствуют классы: {unique_classes}")
+        
+        if self.stage in self.multi_stages and len(unique_classes) < 3:
+            raise ValueError("На многоклассовой стадии недостаточно уникальных меток для обучения.")
+        
         
         # добавляем производные (если указано)
         if config['data']['add_derivatives']:
@@ -117,6 +136,112 @@ class DatasetPreparing:
 
         print("Выборка сформирована")
         return X_train_norm, y_train, X_val_norm, y_val, X_test_norm, y_test
+
+    def _is_label_valid_for_stage(self, row: Dict) -> Union[int, None]:
+        """Формируем метку в зависимости от стадии"""
+        if self.stage == 'stage1':
+            if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                return 0  # "Good" (53%)
+            else:
+                return 1  # "Alert" (47%)
+
+        elif self.stage == 'stage(не реализованная)':
+            if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                return None         # отсев на 1й стадии
+            elif row['Type'] == 'N' and row['Current_Rhythm'] != 'N':
+                return 0  # "Attention" (29%)
+            else:
+                return 1  # "Alarm" (71%)
+
+        elif self.stage == 'stage_all(не реализованная)':
+            self.num_classes = 11
+            if row['Type'] == 'N':
+                return 0  # N: 68.98% == суперкласс Normal
+            elif row['Type'] == 'L':
+                return 1  # L: 15.25%
+            elif row['Type'] == 'R':
+                return 2  # R: 13.71%
+            elif row['Type'] == 'A':
+                return 3  # A: 4.81%
+            elif row['Type'] == 'a':
+                return 4  # a: 0.28%
+            elif row['Type'] == 'J':
+                return 5  # J: 0.16%
+            elif row['Type'] == 'e':
+                return 6  # e: 0.03%
+            elif row['Type'] == 'j':
+                return 7  # j: 0.43%
+            elif row['Type'] == 'V':
+                return 8  # V: 13.47%
+            elif row['Type'] == 'E':
+                return 9  # E: 0.20%
+            elif row['Type'] == 'F':
+                return 10  # F: 1.52%
+            elif row['Type'] == '+':
+                return 11  # +: 2.44%
+            elif row['Type'] in ['Q', '/', '!', '~', 'f', 'U', '?', '"', 'x', '[', ']']:
+                return 12  # шумы: 18.45% == суперкласс Q
+            else:
+                return None
+
+
+        elif self.stage == 'stage2a':
+            self.num_classes = 11
+            if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                return None         # отсев на 1й стадии
+            elif row['Type'] == 'N' and row['Current_Rhythm'] != 'N':
+                return 0  # N: 28.98% == суперкласс Normal
+
+            elif row['Type'] == 'L':
+                return 1  # L: 15.25%
+            elif row['Type'] == 'R':
+                return 2  # R: 13.71%
+            elif row['Type'] == 'A':
+                return 3  # A: 4.81%
+            elif row['Type'] == 'a':
+                return 4  # a: 0.28%
+            elif row['Type'] == 'J':
+                return 5  # J: 0.16%
+            elif row['Type'] == 'e':
+                return 6  # e: 0.03%
+            elif row['Type'] == 'j':
+                return 7  # j: 0.43% == суперкласс SVEB
+
+            elif row['Type'] in ['V', 'E']:
+                return 8  # V: 13.47%, E: 0.20% == суперкласс VEB: 13.67%
+
+            elif row['Type'] in ['F', '+']:
+                return 9  # F: 1.52%, +: 2.44% == суперкласс Fusion: 3.96%
+
+            elif row['Type'] in ['Q', '/', '!', '~', 'f', 'U', '?', '"', 'x', '[', ']']:
+                return 10  # шумы: 18.45% == суперкласс Q
+            else:
+                return None
+
+        elif self.stage == 'stage2':
+            self.num_classes = 11
+            if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                return None         # отсев на 1й стадии
+            elif row['Type'] == 'N' and row['Current_Rhythm'] != 'N':
+                return 0  # N: 28.98% == суперкласс Normal
+
+            elif row['Type'] == 'L':
+                return 1  # L: 15.25% == LBBB
+            elif row['Type'] == 'R':
+                return 2  # R: 13.71% == RBBB
+            elif row['Type'] in ['A', 'a', 'J', 'e', 'j']:
+                return 3  # A: 4.81%, a: 0.28%, J: 0.16%, e: 0.03%, j 0.43% == суперкласс subSVEB
+
+            elif row['Type'] in ['V', 'E']:
+                return 4  # V: 13.47%, E: 0.20% == суперкласс VEB: 13.67%
+
+            elif row['Type'] in ['F', '+']:
+                return 5  # F: 1.52%, +: 2.44% == суперкласс Fusion: 3.96%
+
+            elif row['Type'] in ['Q', '/', '!', '~', 'f', 'U', '?', '"', 'x', '[', ']']:
+                return 6  # шумы: 18.45% == суперкласс Q
+            else:
+                return None
 
     def _create_windows_and_labels(self,
         df_signals: pd.DataFrame,
@@ -155,47 +280,41 @@ class DatasetPreparing:
 
                 # Для каждой аннотации у этого пациента
                 for _, row in df_p_annotation.iterrows():
-                    # Формируем метку в зависимости от стадии
-                    if self.stage == 'stage1':
-                        if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
-                            y.append(0)  # "Good" (53%)
-                        else:
-                            y.append(1)  # "Alert" (47%)
-
-                    elif self.stage == 'stage2':
-                        if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
-                            continue         # отсев на 1й стадии
-                        elif row['Type'] == 'N' and row['Current_Rhythm'] != 'N':
-                            y.append(0)  # "Attention" (29%)
-                        else:
-                            y.append(1)  # "Alarm" (71%)
-
-                    ### print(f">>>> row = {row}\n")
                     sample = row['Sample']
                     start = sample - half_window
                     end = sample + half_window
 
                     # Извлекаем участок сигнала
                     window = df_p_signal[(df_p_signal['Sample'] >= start) & (df_p_signal['Sample'] < end)]
-                    ### print(f">>>> len(window) = {len(window)}")
-                    
+
                     # Избавляемся от неполных окон по краям набора данных
                     if len(window) != window_size:
                         continue
 
+                    ###############################################################
+                    # ФОРМИРОВАНИЕ НАБОРА ( LABELS ) 
+                    # Проверяем валидность метки для стадии
+                    ###############################################################
+                    label = self._is_label_valid_for_stage(row)
+                    if label is None:
+                        continue
+                    y.append(label)
+
                     signal_values = window[target_channel].values
                     x_win.append(signal_values)
-                    ### print(f">>>> len(x_win) = {len(x_win)}")
 
-        ### print("Количество сформированных окон:", len(x_win))
-        ### print("Unique меток в y:", np.unique(y))
         if len(x_win) == 0:
             raise ValueError("Не удалось создать ни одного окна. Возможно, неверный размер окна или фильтрация слишком жёсткая.")
         if len(np.unique(y)) < 2:
             raise ValueError("Недостаточно уникальных меток для обучения модели.")
 
-        return np.array(x_win), np.array(y)
-    
+        np_y = np.array(y)
+        # Если мультикласс, то метки переводим в ohe-формат
+        if self.stage in self.multi_stages:
+            np_y = to_categorical(np_y, num_classes=self.num_classes)
+
+        return np.array(x_win), np_y
+
     def _add_derivatives_to_windows(self, X):
         """
         Добавляет к каждому окну первую и вторую производную в каждой точке, создавая 2 доп. слоя
@@ -328,7 +447,7 @@ class DatasetPreparing:
         Сохраняет датасет на диск с префиксами
         
         :param prefix: str, например 'top', 'cross', 'uni1', 'uni2'
-        :param stage: str, например 'stage1', 'stage2'            
+        :param stage: str, например 'stage1', 'stage2', 'stage2a'
         """
         dir_to_save = config['paths']['data_dir']
         os.makedirs(dir_to_save, exist_ok=True)
@@ -342,4 +461,3 @@ class DatasetPreparing:
             X_test=X_test,
             y_test=y_test
         )
-        return savefile

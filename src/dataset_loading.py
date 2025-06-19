@@ -10,6 +10,8 @@ from typing import Tuple, List
 class DatasetLoading:
     def __init__(self) -> None:
         self.temp_dir = config['paths']['temp_dir']
+        self.all_stages = config['stages']['all']
+        
         self.patient_ids = []
         self.df_all_signals = pd.DataFrame()
         self.df_all_annotations = pd.DataFrame()
@@ -58,16 +60,6 @@ class DatasetLoading:
         label_map = {t: i for i, t in enumerate(self.df_all_annotations['Type'].unique())}
         self.df_all_annotations['Label'] = self.df_all_annotations['Type'].map(label_map)
 
-        print("=== df_all_signals ===")
-        print(self.df_all_signals.head())
-        print("\nКолонки:", list(self.df_all_signals.columns))
-        print("\nРазмер:", len(self.df_all_signals))
-
-        print("\n=== df_all_annotations ===")
-        print(self.df_all_annotations.head())
-        print("\nКолонки:", list(self.df_all_annotations.columns))
-        print("\nТипы аннотаций:", self.df_all_annotations['Type'].unique())
-
         return self.df_all_signals, self.df_all_annotations, self.patient_ids
     
     def check_datasets_exists(self):
@@ -80,12 +72,10 @@ class DatasetLoading:
         exists_all = True
         dataset_path = config['paths']['data_dir']
         prefixes = ['top', 'cross', 'uni1', 'uni2']
-        # stages = ['stage1', 'stage2']
-        stages = ['stage1']
         
         dataset_name = config['data']['dataset_name']
         for pr in prefixes:
-            for stage in stages:
+            for stage in self.all_stages:
                 file_dataset = os.path.join(dataset_path, f"{pr}_{stage}_{dataset_name}")
                 print(f"Проверяю наличие файла: [{file_dataset}]")
                 if not os.path.exists(file_dataset):
@@ -93,5 +83,5 @@ class DatasetLoading:
                     break
                 else:
                     print(f"Обнаружен файл: {file_dataset}")
-        print(f"Пропускаем сбор датасетов, переходим к обучению...")
+        print(f"Пропускаем сбор датасетов, переходим к формированию...")
         return exists_all

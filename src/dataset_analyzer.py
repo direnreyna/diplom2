@@ -20,8 +20,7 @@ class DatasetAnalyze:
         self.df_all_signals = df_all_signals                    # Все сигналы ЭКГ до фильтрации: по всем каналам
         self.df_all_annotations = df_all_annotations            # Все аннотации: по всем каналам                                
 
-        # self.df2_all_signals = None                             # Стадия-2 Все сигналы ЭКГ кроме N: по всем каналам                                
-        self.df2_all_annotations = None                         # Все аннотации кроме N: по всем каналам                                
+        self.df2_all_annotations = None                         # Все аннотации кроме N: по всем каналам  (для анализа ДС)                              
         
         self.channels_per_patient = {}                          # Информация по каждому пациенту: какие каналы доступны, OHE-вектор
         self.target_channel_name_1 = ''                         # Имя основного канала для обучения (например, 'MLII')
@@ -926,7 +925,7 @@ class DatasetAnalyze:
 
     def _filter_dataframes(self):
         """
-        Формирует для 1й стадии датафреймы сигналов и аннотаций по двум каналам:
+        Формирует датафреймы сигналов и аннотаций (подходящие для любой стадии) по двум каналам:
             - self.df_top_signals / self.df_top_annotations → обучение на основном канале (target_channel_name_1)
             - self.df_cross_signals / self.df_cross_annotations → тестирование на втором канале (target_channel_name_2)
             - self.df_united_signals_1 / self.df_united_annotation_1 → данные для модели 1

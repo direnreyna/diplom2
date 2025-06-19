@@ -3,11 +3,12 @@
 import os
 import numpy as np
 import tensorflow as tf
+import seaborn as sns
 import matplotlib.pyplot as plt
 
 from self_attention_block import SelfAttentionBlock
 #from src.layers.self_attention_block import SelfAttentionBlock
-from typing import Tuple
+from typing import Tuple, List
 from config import config
 from tqdm import tqdm
 from tensorflow.keras.models import Sequential, load_model
@@ -15,18 +16,25 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, In
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
-from tensorflow.keras import layers, Model
+from tensorflow.keras import layers, Model, losses
 
 class ModelTraining:
     def __init__(self, stage, prefix) -> None:
         self.stage = stage
+        self.multi_stages = config['stages']['multi']
         self.prefix = prefix
         self.model = None
         self.history = None
+        self.class_labels = {
+            'stage1': ["Good (N+N)", "Alert"],
+            'stage2_2': ["Attention", "Alarm"],
+            'stage2a': ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'VEB', 'Fusion', 'Q'],
+            'stage2': ['N', 'L', 'R', 'subSVEB', 'VEB', 'Fusion', 'Q']
+        }
         
         self.best_model_file = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model']}")                ## Сохраненная модель
-        self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model_weights']}") ## Сохраненные веса
-        #self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{self.stage}_{config['paths']['best_model_weights']}") ## Сохраненные веса
+        #self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model_weights']}") ## Сохраненные веса
+        self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{self.stage}_{config['paths']['best_model_weights']}") ## Сохраненные веса
         
         self.X_train, self.y_train, self.X_val, self.y_val, self.X_test, self.y_test = self.load_dataset()
         num_classes = len(np.unique(self.y_train))      # 2: Good (0), Alert (1)
@@ -60,60 +68,64 @@ class ModelTraining:
         self._evaluate_on_val()
         self.evaluate_model()
 
-    def _create_model_old(self):
+    def _categorical_focal_loss(self, gamma: float = 2.0, alpha: List[float] = [1.0, 1.0, 1.0, 1.0]):
         """
-        Создает и компилирует модель
+        Focal Loss для многоклассовой классификации
+        :param gamma: фокусировка на сложных примерах
+        :param alpha: список весов для каждого класса
         """
-        if len(self.X_train.shape) < 3:
-            self.X_train = np.expand_dims(self.X_train, axis=2)
-        input_shape = self.X_train.shape[1:]            # форма экземпляра: (window_size, channels)
-       
-        # Загрузка сохраненной дообученной модели
-        if os.path.exists(self.best_model_file):
-            print(f"Загружаем модель с диска: {self.best_model_file}.")
-            self.model = load_model(
-                self.best_model_file, 
-                custom_objects={'SelfAttentionBlock': SelfAttentionBlock}
-            )
-            return
+        alpha_tensor = tf.constant(alpha, dtype=tf.float32)
 
-        print(f"Создаем новую модель.")
-        model = Sequential()
-        model.add(InputLayer(input_shape=input_shape))
+        def loss(y_true, y_pred):
+            # Сглаживаем предсказания
+            y_pred = tf.clip_by_value(y_pred, 1e-7, 1 - 1e-7)
 
-        model.add(Conv1D(64, (3), activation='relu', input_shape=input_shape))
-        model.add(SelfAttentionBlock(use_projection=True))
-        model.add(Dropout(0.3))
+            # Вероятность истинного класса
+            pt = tf.reduce_sum(y_true * y_pred, axis=-1)
 
-        model.add(Conv1D(128, (3), activation='relu'))
-        model.add(SelfAttentionBlock(use_projection=True))
-        model.add(Dropout(0.3))
+            # Веса альфа для истинного класса
+            weight = tf.reduce_sum(y_true * alpha_tensor, axis=-1)
 
-        model.add(LSTM(32, return_sequences=True))
-        model.add(Dropout(0.4))
+            # Формула Focal Loss
+            fl = -weight * tf.pow(1.0 - pt, gamma) * tf.math.log(pt)
 
-        model.add(LSTM(64, return_sequences=False))
-        model.add(Dropout(0.4))
+            return fl  # минимизируем эту величину
+        return loss
+        
+    def f1_score(self, y_true, y_pred):
+        y_pred = tf.round(tf.clip_by_value(y_pred, 0, 1))
 
-        model.add(Dense(32))
-        model.add(BatchNormalization())
-        model.add(Activation('relu'))
+        tp = tf.reduce_sum(y_true * y_pred, axis=0)
+        fp = tf.reduce_sum((1 - y_true) * y_pred, axis=0)
+        fn = tf.reduce_sum(y_true * (1 - y_pred), axis=0)
 
-        model.add(Dense(1, activation='sigmoid'))
+        precision = tp / (tp + fp + 1e-7)
+        recall = tp / (tp + fn + 1e-7)
 
-        model.compile(
-            optimizer=Adam(learning_rate=config['params']['learning_rate']),
-            loss='binary_crossentropy',
-            metrics=['accuracy']
-        )
-        model.summary()
-        self.model = model
-
+        f1 = 2 * precision * recall / (precision + recall + 1e-7)
+        return tf.reduce_mean(f1)
 
     def _create_model(self):
         """
         Создает и компилирует модель
         """
+        #################################################################################
+        if self.stage in self.multi_stages:
+            class_counts = np.sum(self.y_train, axis=0)
+            total = np.sum(class_counts)
+            alpha_weights = np.sqrt(total / class_counts)               # или любая другая стратегия
+            alpha_weights /= np.sum(alpha_weights)                      # нормализуем
+            stage_loss=self._categorical_focal_loss(gamma=2.0, alpha=alpha_weights)
+            last_layer = Dense(self.y_train.shape[1], activation='softmax')
+            stage_metrics=['accuracy', self.f1_score]
+            print(f">>> Число классов: {self.y_train.shape[1]}")
+
+        else:
+            stage_loss='binary_crossentropy'
+            last_layer = Dense(1, activation='sigmoid')
+            stage_metrics=['accuracy']
+        #################################################################################
+
         if len(self.X_train.shape) < 3:
             self.X_train = np.expand_dims(self.X_train, axis=2)
         input_shape = self.X_train.shape[1:]            # форма экземпляра: (window_size, channels)
@@ -139,13 +151,12 @@ class ModelTraining:
         model.add(Dense(32))
         model.add(BatchNormalization())
         model.add(Activation('relu'))
-
-        model.add(Dense(1, activation='sigmoid'))
+        model.add(last_layer)
 
         model.compile(
             optimizer=Adam(learning_rate=config['params']['learning_rate']),
-            loss='binary_crossentropy',
-            metrics=['accuracy']
+            loss=stage_loss,
+            metrics=stage_metrics
         )
         model.summary()
        
@@ -154,7 +165,7 @@ class ModelTraining:
             print(f"Загружаем модель с диска: {self.best_model_file_weights}.")
             model.load_weights(self.best_model_file_weights)                          ## загружаем только веса
             # self.model = load_model(self.best_model_file_weights)                   ## загружаем всю модель
-            print("У модели Оптимизатор:", self.model.optimizer.get_config())
+            print("У модели Оптимизатор:", model.optimizer.get_config())
 
         self.model = model
 
@@ -168,7 +179,7 @@ class ModelTraining:
         best_model = ModelCheckpoint(
             #self.best_model_file,          ## сохраняем всю модель
             self.best_model_file_weights,   ## сохраняем только веса
-            monitor='val_accuracy',
+            monitor='val_f1_score',
             save_best_only=True,            ## сохраняем лучшую модель...
             save_weights_only=True,         ## ... при этом только веса
             mode='max',
@@ -208,28 +219,49 @@ class ModelTraining:
 
         acc = self.history.history['accuracy']
         val_acc = self.history.history['val_accuracy']
+
+        f1_score = self.history.history['f1_score']
+        val_f1_score = self.history.history['val_f1_score']
+        
         loss = self.history.history['loss']
         val_loss = self.history.history['val_loss']
 
         epochs = range(len(acc))
 
-        plt.figure(figsize=(12, 5))
+        plt.figure(figsize=(18, 5))
 
         # Accuracy
-        plt.subplot(1, 2, 1)
+        plt.subplot(1, 3, 1)
         plt.plot(epochs, acc, 'b', label='Train accuracy')
         plt.plot(epochs, val_acc, 'r', label='Valid accuracy')
         plt.title(f'{self.prefix} - Accuracy')
         plt.legend()
 
+        # f1-score
+        plt.subplot(1, 3, 1)
+        plt.plot(epochs, f1_score, 'b', label='Train f1-score')
+        plt.plot(epochs, val_f1_score, 'r', label='Valid f1-score')
+        plt.title(f'{self.prefix} - f1-score')
+        plt.legend()
+
         # Loss
-        plt.subplot(1, 2, 2)
+        plt.subplot(1, 3, 3)
         plt.plot(epochs, loss, 'b', label='Train loss')
         plt.plot(epochs, val_loss, 'r', label='Valid loss')
         plt.title(f'{self.prefix} - Loss')
         plt.legend()
 
         plt.tight_layout()
+        plt.show()
+
+    def plot_confusion_matrix(self, cm, class_names, title="Confusion Matrix", save_path=None):
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+        plt.title(title)
+        plt.xlabel("Predicted")
+        plt.ylabel("True")
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.show()
 
     def _evaluate_on_val(self):
@@ -241,8 +273,20 @@ class ModelTraining:
 
         print(f"[{self.prefix}] Оценка на валидационной выборке")
         y_pred = self.model.predict(self.X_val)
-        y_pred_classes = (y_pred > 0.5).astype(int)  # бинарная классификация
-        y_true = self.y_val
+
+        # многоклассовая
+        if self.stage in self.multi_stages:
+            y_true = np.argmax(self.y_val, axis=1)
+            y_pred_classes = np.argmax(y_pred, axis=1)
+        # бинарная 
+        else:
+            y_true = self.y_val.astype(int).flatten()
+            y_pred_classes = (y_pred > 0.5).astype(int).flatten()
+
+        class_names = self.class_labels[self.stage]  # список имён классов
+        cm = confusion_matrix(y_true, y_pred_classes)
+        print("Confusion matrix:\n", cm)
+        self.plot_confusion_matrix(cm, class_names=class_names)
 
         self._print_evaluation(y_true, y_pred_classes, dataset_name="валидационной")
         
@@ -255,8 +299,15 @@ class ModelTraining:
 
         print(f"[{self.prefix}] Оценка на тестовой выборке")
         y_pred = self.model.predict(self.X_test)
-        y_pred_classes = (y_pred > 0.5).astype(int)
-        y_true = self.y_test
+
+        # многоклассовая
+        if self.stage in self.multi_stages:
+            y_true = np.argmax(self.y_test, axis=1)
+            y_pred_classes = np.argmax(y_pred, axis=1)
+        # бинарная 
+        else:
+            y_true = self.y_test.astype(int).flatten()
+            y_pred_classes = (y_pred > 0.5).astype(int).flatten()
 
         self._print_evaluation(y_true, y_pred_classes, dataset_name="тестовой")
 
@@ -268,29 +319,46 @@ class ModelTraining:
         print(f"\nAccuracy на {dataset_name} выборке: {acc:.4f}\n")
 
         report = classification_report(
-            y_true,
+            y_true, 
             y_pred_classes,
-            target_names=["Good (0)", "Alert (1)"],
+            target_names=self.class_labels[self.stage],
             digits=4
         )
         print(report)
 
         # Матрица ошибок (опционально)
+        class_names = self.class_labels[self.stage]  # список имён классов
         cm = confusion_matrix(y_true, y_pred_classes)
-        print(f"Матрица ошибок ({dataset_name}):\n", cm)
+        print("Confusion matrix:\n", cm)
+        self.plot_confusion_matrix(cm, class_names=class_names)
 
     def evaluate_on_test(self):
+        if self.model is None:
+            raise ValueError("Модель не создана. Сначала обучите модель.")
+
         print(f"[{self.prefix}] Оценка на тестовой выборке")
         y_pred = self.model.predict(self.X_test)
-        y_pred_classes = (y_pred > 0.5).astype(int)
 
-        report = classification_report(self.y_test, y_pred_classes, digits=4)
+        # многоклассовая
+        if self.stage in self.multi_stages:
+            y_true = np.argmax(self.y_test, axis=1)
+            y_pred_classes = np.argmax(y_pred, axis=1)
+        # бинарная
+        else:
+            y_true = self.y_test.astype(int).flatten()
+            y_pred_classes = (y_pred > 0.5).astype(int).flatten()
+
+        report = classification_report(y_true, y_pred_classes, digits=4)
         print(report)
 
-        cm = confusion_matrix(self.y_test, y_pred_classes)
+        class_names = self.class_labels[self.stage]  # список имён классов
+        cm = confusion_matrix(y_true, y_pred_classes)
         print("Confusion matrix:\n", cm)
-
+        self.plot_confusion_matrix(cm, class_names=class_names)
+        
         return {
             'report': report,
             'confusion_matrix': cm
         }
+    
+
