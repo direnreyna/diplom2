@@ -25,8 +25,12 @@ preprocessor = DatasetPreprocessing()
 preprocessor.pipeline()
 
 # Обучение модели top
-trainer = ModelTraining('stage2', 'top')
-trainer.pipeline(mode='full')
+# trainer = ModelTraining('stage1', 'total')
+# trainer.pipeline(mode='full')
+
+# Обучение модели top
+# trainer = ModelTraining('stage3', 'top')
+# trainer.pipeline(mode='full')
 
 # Оценка модели top
 # trainer = ModelTraining('stage2', 'top')

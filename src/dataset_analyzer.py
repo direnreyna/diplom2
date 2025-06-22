@@ -36,6 +36,9 @@ class DatasetAnalyze:
         self.df_united_signals_2 = pd.DataFrame()               # Отфильтрованные сигналы для формирования 2го ДС по 2 топ-каналам
         self.df_united_annotation_2 = pd.DataFrame()            # Аннотации для формирования 2го ДС по 2 топ-каналам
 
+        self.df_total_signals = pd.DataFrame()                  # Сигналы по весм каналам
+        self.df_total_annotations = pd.DataFrame()              # Аннотации по весм каналам
+
         self.df_global_peak_distribution = pd.DataFrame()       # Общее распределение типов R-пиков: Count, Percent
         self.df_patient_peak_top_types = pd.DataFrame()         # Топ-5 типов пиков на пациента → только проценты
         self.df_patient_normal_abnormal_ratio = pd.DataFrame()  # Процент нормальных / аномальных пиков на пациента
@@ -86,15 +89,16 @@ class DatasetAnalyze:
             self._visualize_top_anomalies_pie()                                 # Pie chart: самые частые аномалии по пациентам
         
         # 2я стадия выделение датафреймов без N+N R-пиков
-        self._create_dataframes_for_stage_2()                               # создает self.df2_all_signals и self.df2_all_annotations
+        self._create_dataframes_for_stage_2()                                   # создает self.df2_all_signals и self.df2_all_annotations
 
-        # Анализ R-пиков и типов событий
-        self._analyze_Current_Rhythm_statistics(self.df2_all_annotations)   # Формирует общую статистику по Aux-событиям
-        self._binary_rhythm_type_analysis_for_stage2(self.df2_all_annotations)  # Анализирует баланс нормальных R-пиков вне нормальных Aux-событиий (стадия 2)
-        self._visualize_global_rhythm_distribution(stage='stage_2_')        # 
-        self._visualize_binary_rhythm_analysis_for_stage2()                 # 
-        self._analyze_peak_statistics_for_stage2()                          # Формирует общую статистику распределению R-пиков на 2й стадии (без N+N)
-        self._visualize_all_peak_types()                                    # Визуализирует общую статистику распределению R-пиков на 2й стадии (без N+N)
+        if self.check_analytics:
+            # Анализ R-пиков и типов событий
+            self._analyze_Current_Rhythm_statistics(self.df2_all_annotations)   # Формирует общую статистику по Aux-событиям
+            self._binary_rhythm_type_analysis_for_stage2(self.df2_all_annotations)  # Анализирует баланс нормальных R-пиков вне нормальных Aux-событиий (стадия 2)
+            self._visualize_global_rhythm_distribution(stage='stage_2_')        # 
+            self._visualize_binary_rhythm_analysis_for_stage2()                 # 
+            self._analyze_peak_statistics_for_stage2()                          # Формирует общую статистику распределению R-пиков на 2й стадии (без N+N)
+            self._visualize_all_peak_types()                                    # Визуализирует общую статистику распределению R-пиков на 2й стадии (без N+N)
 
         # Формирование окончательных датасетов
         self._filter_dataframes()                                               # Формирование итоговых датафреймов под 2 задачи
@@ -109,7 +113,9 @@ class DatasetAnalyze:
             self.df_united_signals_1, 
             self.df_united_annotation_1, 
             self.df_united_signals_2, 
-            self.df_united_annotation_2
+            self.df_united_annotation_2,
+            self.df_total_signals,
+            self.df_total_annotations
         )
 
     def _check_channels_per_patient(self):
@@ -205,7 +211,7 @@ class DatasetAnalyze:
         channel_counter = dict(sorted(channel_counter.items(), key=lambda x: x[1], reverse=True))
 
         plt.figure(figsize=(10, 6))
-        sns.barplot(x=list(channel_counter.keys()), y=list(channel_counter.values()))
+        sns.barplot(x=list(channel_counter.keys()), y=list(channel_counter.values()), hue=list(channel_counter.keys()))
         plt.title('Распределение каналов по числу пациентов')
         plt.ylabel('Число пациентов')
         plt.xlabel('Каналы ЭКГ')
@@ -439,7 +445,7 @@ class DatasetAnalyze:
         df = self.df_global_aux_distribution.sort_values(by='Count', ascending=False).head(10)
 
         plt.figure(figsize=(12, 6))
-        sns.barplot(x=df.index, y='Percent', data=df, palette='viridis')
+        sns.barplot(x=df.index, y='Percent', data=df, palette='viridis', hue=df.index)
         plt.title("Распределение ритмов из Current_Rhythm (в % от всех пиков)")
         plt.ylabel("Процент")
         plt.xlabel("Ритм")
@@ -549,7 +555,7 @@ class DatasetAnalyze:
         """
 
         plt.figure(figsize=(14, 6))
-        barplot = sns.barplot(x='Type', y='Count', data=self.peak_statistics_for_stage2, palette="viridis")
+        barplot = sns.barplot(x='Type', y='Count', data=self.peak_statistics_for_stage2, palette="viridis", hue='Type')
    
         # Подписываем столбцы
         for index, row in self.peak_statistics_for_stage2.iterrows():
@@ -930,6 +936,8 @@ class DatasetAnalyze:
             - self.df_cross_signals / self.df_cross_annotations → тестирование на втором канале (target_channel_name_2)
             - self.df_united_signals_1 / self.df_united_annotation_1 → данные для модели 1
             - self.df_united_signals_2 / self.df_united_annotation_2 → данные для модели 2
+            self.df_full_signals
+            self.df_full_annotation
         """
 
         # Фильтруем по первому каналу
@@ -949,6 +957,25 @@ class DatasetAnalyze:
         )
         print(f"Оставлено записей после фильтрации (по {self.target_channel_name_2}): {len(self.df_cross_signals)}")
         print(f"Оставлено аннотаций после фильтрации (по {self.target_channel_name_2}): {len(self.df_cross_annotations)}")
+
+        # Создание ДФ по всем каналам, но выстроенным в один столбец.
+        list_of_signals = []
+        list_of_annotations = []
+        for channel in ['MLII', 'V1', 'V2', 'V4', 'V5']:
+            df_sig, df_ann = self._filter_df(
+                self.df_all_signals,
+                self.df_all_annotations,
+                channel
+            )
+            # Переименовываем колонку с сигналом в общее имя 'Signal' в ДФ сигналов
+            df_sig.rename(columns={channel: 'Signal'}, inplace=True)
+            df_ann['Channel'] = channel  # добавляем метку о канале в ДФ сигналов
+            df_sig['Channel'] = channel  # добавляем метку о канале в ДФ аннотаций
+    
+            list_of_signals.append(df_sig)
+            list_of_annotations.append(df_ann)            
+        self.df_total_signals = pd.concat(list_of_signals, ignore_index=True)
+        self.df_total_annotations = pd.concat(list_of_annotations, ignore_index=True)
 
         # Находим общих пациентов
         common_pids = np.intersect1d(
@@ -975,14 +1002,17 @@ class DatasetAnalyze:
         :param channel: название канала для фильтрации (например 'MLII', 'V1')
         :return: df_filtered_s, df_filtered_a
         """
+        # Проверяем, существует ли такой канал в сигналах
+        if channel not in df_s.columns:
+            raise ValueError(f"Канал '{channel}' отсутствует в df_signals")        
 
         # Фильтруем сигналы по наличию данных в целевом канале
-        df_filtered_s = (df_s[df_s[channel].notna()][['Sample', channel, 'Patient_id']])
+        df_filtered_s = df_s[df_s[channel].notna()][['Sample', channel, 'Patient_id']].copy()
 
         # Получаем уникальные pid из отфильтрованных сигналов
         valid_pids = df_filtered_s['Patient_id'].unique()
 
         # Фильтруем аннотации
-        df_filtered_a = df_a[df_a['Patient_id'].isin(valid_pids)]
+        df_filtered_a = df_a[df_a['Patient_id'].isin(valid_pids)].copy()
 
         return df_filtered_s, df_filtered_a

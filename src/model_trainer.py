@@ -18,6 +18,7 @@ from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from tensorflow.keras import layers, Model, losses
 
+
 class ModelTraining:
     def __init__(self, stage, prefix) -> None:
         self.stage = stage
@@ -29,7 +30,8 @@ class ModelTraining:
             'stage1': ["Good (N+N)", "Alert"],
             'stage2_2': ["Attention", "Alarm"],
             'stage2a': ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'VEB', 'Fusion', 'Q'],
-            'stage2': ['N', 'L', 'R', 'subSVEB', 'VEB', 'Fusion', 'Q']
+            'stage2': ['N', 'L', 'R', 'subSVEB', 'VEB', 'Fusion', 'Q'],
+            'stage3': ['A', 'a', 'J', 'e', 'j'],
         }
         
         self.best_model_file = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model']}")                ## Сохраненная модель
@@ -186,9 +188,10 @@ class ModelTraining:
             verbose=1)
 
         early_stop = EarlyStopping(
-            monitor='val_loss',
+            monitor='val_f1_score',
             patience=config['params']['patience'],
             restore_best_weights=True,
+            mode='max',
             verbose=1)
 
         history = self.model.fit(
@@ -238,7 +241,7 @@ class ModelTraining:
         plt.legend()
 
         # f1-score
-        plt.subplot(1, 3, 1)
+        plt.subplot(1, 3, 2)
         plt.plot(epochs, f1_score, 'b', label='Train f1-score')
         plt.plot(epochs, val_f1_score, 'r', label='Valid f1-score')
         plt.title(f'{self.prefix} - f1-score')

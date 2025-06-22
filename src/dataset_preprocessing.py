@@ -31,6 +31,9 @@ class DatasetPreprocessing():
         self.df_united_signals_2 = pd.DataFrame()               # Отфильтрованные сигналы для формирования 2го ДС по 2 топ-каналам
         self.df_united_annotation_2 = pd.DataFrame()            # Аннотации для формирования 2го ДС по 2 топ-каналам
 
+        self.df_total_signals = pd.DataFrame()                  # Сигналы по весм каналам
+        self.df_total_annotations = pd.DataFrame()              # Аннотации по весм каналам
+
         # === Список сохраненных на диск выборок для моделей ===
         self.dataset_dict = {}                                  # Ключи: 'top' / 'cross' / 'uni_1' / 'uni_2'
 
@@ -56,7 +59,9 @@ class DatasetPreprocessing():
         self.df_united_signals_1, 
         self.df_united_annotation_1, 
         self.df_united_signals_2, 
-        self.df_united_annotation_2) = analyzer.pipeline()
+        self.df_united_annotation_2,
+        self.df_total_signals,
+        self.df_total_annotations) = analyzer.pipeline()
         return self
     
     def prepare_data(self):
@@ -71,7 +76,9 @@ class DatasetPreprocessing():
         self.df_united_signals_1, 
         self.df_united_annotation_1, 
         self.df_united_signals_2, 
-        self.df_united_annotation_2)
+        self.df_united_annotation_2,
+        self.df_total_signals,
+        self.df_total_annotations)
         preparer.pipeline()
     
     def pipeline(self):

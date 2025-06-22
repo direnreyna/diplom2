@@ -71,7 +71,7 @@ class DatasetLoading:
         """
         exists_all = True
         dataset_path = config['paths']['data_dir']
-        prefixes = ['top', 'cross', 'uni1', 'uni2']
+        prefixes = ['top', 'cross', 'uni1', 'uni2', 'total']
         
         dataset_name = config['data']['dataset_name']
         for pr in prefixes:
