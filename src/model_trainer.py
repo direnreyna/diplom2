@@ -32,6 +32,7 @@ class ModelTraining:
             'stage2a': ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'VEB', 'Fusion', 'Q'],
             'stage2': ['N', 'L', 'R', 'subSVEB', 'VEB', 'Fusion', 'Q'],
             'stage3': ['A', 'a', 'J', 'e', 'j'],
+            'stage01': ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'V', 'E', 'F', '+', 'Q'],
         }
         
         self.best_model_file = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model']}")                ## Сохраненная модель
@@ -138,11 +139,20 @@ class ModelTraining:
 
         model.add(Conv1D(64, (3), activation='relu', input_shape=input_shape))
         model.add(SelfAttentionBlock(use_projection=True))
-        model.add(Dropout(0.3))
 
         model.add(Conv1D(128, (3), activation='relu'))
         model.add(SelfAttentionBlock(use_projection=True))
-        model.add(Dropout(0.3))
+
+        ### model.add(Conv1D(64, (3), input_shape=input_shape))
+        ### model.add(BatchNormalization())
+        ### model.add(Activation('relu'))
+        ### model.add(SelfAttentionBlock(use_projection=True))
+        ### #model.add(Dropout(0.3))
+        ### model.add(Conv1D(128, (3)))
+        ### model.add(BatchNormalization())
+        ### model.add(Activation('relu'))
+        ### model.add(SelfAttentionBlock(use_projection=True))
+        ### #model.add(Dropout(0.3))
 
         model.add(LSTM(32, return_sequences=True))
         model.add(Dropout(0.4))
@@ -165,7 +175,8 @@ class ModelTraining:
         # Загрузка сохраненной дообученной модели
         if os.path.exists(self.best_model_file_weights):
             print(f"Загружаем модель с диска: {self.best_model_file_weights}.")
-            model.load_weights(self.best_model_file_weights)                          ## загружаем только веса
+            status = model.load_weights(self.best_model_file_weights)                          ## загружаем только веса
+            print(status)
             # self.model = load_model(self.best_model_file_weights)                   ## загружаем всю модель
             print("У модели Оптимизатор:", model.optimizer.get_config())
 
@@ -177,18 +188,23 @@ class ModelTraining:
         """
         epochs=config['params']['epochs']
         batch_size=config['params']['batch_size']
-        
+
+        if self.stage in self.multi_stages:
+            monitor = 'val_f1_score'
+        else:
+            monitor = 'val_accuracy'
+
         best_model = ModelCheckpoint(
             #self.best_model_file,          ## сохраняем всю модель
             self.best_model_file_weights,   ## сохраняем только веса
-            monitor='val_f1_score',
+            monitor=monitor,
             save_best_only=True,            ## сохраняем лучшую модель...
             save_weights_only=True,         ## ... при этом только веса
             mode='max',
             verbose=1)
 
         early_stop = EarlyStopping(
-            monitor='val_f1_score',
+            monitor=monitor,
             patience=config['params']['patience'],
             restore_best_weights=True,
             mode='max',
@@ -222,37 +238,56 @@ class ModelTraining:
 
         acc = self.history.history['accuracy']
         val_acc = self.history.history['val_accuracy']
-
-        f1_score = self.history.history['f1_score']
-        val_f1_score = self.history.history['val_f1_score']
         
         loss = self.history.history['loss']
         val_loss = self.history.history['val_loss']
 
         epochs = range(len(acc))
 
-        plt.figure(figsize=(18, 5))
+        if self.stage in self.multi_stages:
 
-        # Accuracy
-        plt.subplot(1, 3, 1)
-        plt.plot(epochs, acc, 'b', label='Train accuracy')
-        plt.plot(epochs, val_acc, 'r', label='Valid accuracy')
-        plt.title(f'{self.prefix} - Accuracy')
-        plt.legend()
+            f1_score = self.history.history['f1_score']
+            val_f1_score = self.history.history['val_f1_score']
 
-        # f1-score
-        plt.subplot(1, 3, 2)
-        plt.plot(epochs, f1_score, 'b', label='Train f1-score')
-        plt.plot(epochs, val_f1_score, 'r', label='Valid f1-score')
-        plt.title(f'{self.prefix} - f1-score')
-        plt.legend()
+            plt.figure(figsize=(18, 5))
 
-        # Loss
-        plt.subplot(1, 3, 3)
-        plt.plot(epochs, loss, 'b', label='Train loss')
-        plt.plot(epochs, val_loss, 'r', label='Valid loss')
-        plt.title(f'{self.prefix} - Loss')
-        plt.legend()
+            # Accuracy
+            plt.subplot(1, 3, 1)
+            plt.plot(epochs, acc, 'b', label='Train accuracy')
+            plt.plot(epochs, val_acc, 'r', label='Valid accuracy')
+            plt.title(f'{self.prefix} - Accuracy')
+            plt.legend()
+
+            # f1-score
+            plt.subplot(1, 3, 2)
+            plt.plot(epochs, f1_score, 'b', label='Train f1-score')
+            plt.plot(epochs, val_f1_score, 'r', label='Valid f1-score')
+            plt.title(f'{self.prefix} - f1-score')
+            plt.legend()
+
+            # Loss
+            plt.subplot(1, 3, 3)
+            plt.plot(epochs, loss, 'b', label='Train loss')
+            plt.plot(epochs, val_loss, 'r', label='Valid loss')
+            plt.title(f'{self.prefix} - Loss')
+            plt.legend()
+
+        else:
+            plt.figure(figsize=(12, 5))
+
+            # Accuracy
+            plt.subplot(1, 2, 1)
+            plt.plot(epochs, acc, 'b', label='Train accuracy')
+            plt.plot(epochs, val_acc, 'r', label='Valid accuracy')
+            plt.title(f'{self.prefix} - Accuracy')
+            plt.legend()
+
+            # Loss
+            plt.subplot(1, 2, 2)
+            plt.plot(epochs, loss, 'b', label='Train loss')
+            plt.plot(epochs, val_loss, 'r', label='Valid loss')
+            plt.title(f'{self.prefix} - Loss')
+            plt.legend()
 
         plt.tight_layout()
         plt.show()

@@ -83,5 +83,5 @@ class DatasetLoading:
                     break
                 else:
                     print(f"Обнаружен файл: {file_dataset}")
-        print(f"Пропускаем сбор датасетов, переходим к формированию...")
+        print(f"Что-то не нашел... пропускаю загрузку датасетов, перехожу к формированию...")
         return exists_all

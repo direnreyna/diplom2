@@ -4,17 +4,20 @@ paths:
   temp_dir: "temp"
   source_dir: "src"
   model_dir: "model"
+  scaler_dir: "model"
   best_model: "best_model.keras"
   best_model_weights: "best_model.weights.h5"
   
 params:
-  batch_size: 1024
-  epochs: 10000
-  patience: 2000
+  batch_size: 768
+  epochs: 1000
+  patience: 500
   learning_rate: 0.001
 
 data:
   add_derivatives: False
+  add_augmentations: True
+  size_augmentations: 6000
   test_size: 0.15
   val_size: 0.15
   normalization: "minmax"
@@ -24,5 +27,8 @@ data:
   dataset_name: "dataset.npz"
   
 stages:
-  all: ["stage1", "stage2a", "stage2", "stage3"] 
-  multi: ["stage2a", "stage2", "stage3"]
+  all: ["stage1", "stage01", "stage2a", "stage2", "stage3"] 
+  multi: ["stage01", "stage2a", "stage2", "stage3"]
+
+augs:
+  stage2: [0, 0, 0, 3000, 0, 3000, 3000]
