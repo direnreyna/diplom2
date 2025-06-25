@@ -9,9 +9,9 @@ paths:
   best_model_weights: "best_model.weights.h5"
   
 params:
-  batch_size: 768
-  epochs: 1000
-  patience: 500
+  batch_size: 1024
+  epochs: 100
+  patience: 50
   learning_rate: 0.001
 
 data:

@@ -139,10 +139,9 @@ class ModelTraining:
 
         model.add(Conv1D(64, (3), activation='relu', input_shape=input_shape))
         model.add(SelfAttentionBlock(use_projection=True))
-
         model.add(Conv1D(128, (3), activation='relu'))
         model.add(SelfAttentionBlock(use_projection=True))
-
+        
         ### model.add(Conv1D(64, (3), input_shape=input_shape))
         ### model.add(BatchNormalization())
         ### model.add(Activation('relu'))
