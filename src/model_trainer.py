@@ -1,19 +1,21 @@
-# model_trainer.py
+# src/model_trainer.py
 
 import os
 import numpy as np
 import tensorflow as tf
 import seaborn as sns
 import matplotlib.pyplot as plt
+import mlflow
+import mlflow.keras
 
 from self_attention_block import SelfAttentionBlock
-from typing import Tuple, List
+from typing import Tuple, List, cast
 from config import config
 
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, InputLayer, Activation, Conv1D, Input
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
 class ModelTraining:
@@ -34,6 +36,10 @@ class ModelTraining:
         self.X_train, self.y_train, self.X_val, self.y_val, self.X_test, self.y_test = self.load_dataset()
         num_classes = len(np.unique(self.y_train))      # 2: Good (0), Alert (1)
         os.makedirs(config['paths']['model_dir'], exist_ok=True)
+
+        # Логируем параметры из конфига в MLflow
+        mlflow.log_params(config['params'])
+        mlflow.log_params(config['data'])
 
     def load_dataset(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Загружает уже сохраненный ранее датасет"""
@@ -64,7 +70,7 @@ class ModelTraining:
         self._evaluate_on_val()
         self.evaluate_model()
 
-    def _categorical_focal_loss(self, gamma: float = 2.0, alpha: List[float] | None = None):
+    def _categorical_focal_loss(self, gamma: float = 2.0, alpha: List[float] = [1.0, 1.0, 1.0, 1.0]):
         """
         Focal Loss для многоклассовой классификации
         :param gamma: фокусировка на сложных примерах
@@ -96,7 +102,7 @@ class ModelTraining:
             y_pred_labels = tf.argmax(y_pred, axis=-1)
             y_true_labels = tf.argmax(y_true, axis=-1)
             
-            cm = tf.math.confusion_matrix(y_true_labels, y_pred_labels, num_classes=tf.shape(y_true)[-1])
+            cm = tf.math.confusion_matrix(y_true_labels, y_pred_labels, num_classes=y_true.shape[-1])
             
             tp = tf.linalg.diag_part(cm)
             fp = tf.reduce_sum(cm, axis=0) - tp
@@ -257,28 +263,44 @@ class ModelTraining:
 
         early_stop = EarlyStopping(
             monitor=monitor,
-            patience=config['params']['patience'],
+            patience=config['params']['patience_early_stop'],
             restore_best_weights=True,
             mode='max',
             verbose=1)
+
+        reduce_lr = ReduceLROnPlateau(
+            monitor=monitor,
+            factor=config['params']['factor_reduce_lr'],
+            patience=config['params']['patience_early_stop'],
+            min_lr=config['params']['min_learning_rate'],
+            verbose=1)
+
+        # Включаем автологирование для Keras. Оно само будет логировать метрики на каждой эпохе.
+        mlflow.keras.autolog()
 
         history = self.model.fit(
             self.X_train, self.y_train,
             validation_data=(self.X_val, self.y_val),
             epochs=epochs,
             batch_size=batch_size,
-            callbacks=[best_full_model, best_weights_only, early_stop],
+            callbacks=[best_full_model, best_weights_only, early_stop, reduce_lr],
             verbose=1
         )
         self.history = history
+
+        # Логируем лучшую модель как артефакт
+        # Это сохранит модель в папку mlruns, связанную с этим запуском
+        mlflow.keras.log_model(self.model, "best_model")
+        print("Модель успешно залогирована в MLflow.")
+
         self._plot_training_history()
 
-        # Выведем пару случайных окон
-        for i in range(5):
-            z = np.random.randint(1000)
-            plt.plot(self.X_train[i+z])
-            plt.title(f"Label: {self.y_train[i+z]}")
-            plt.show()        
+        ### # Выведем пару случайных окон
+        ### for i in range(5):
+        ###     z = np.random.randint(1000)
+        ###     plt.plot(self.X_train[i+z])
+        ###     plt.title(f"Label: {self.y_train[i+z]}")
+        ###     plt.show()        
         
         print(f"[{self.prefix}] Обучение модели завершено")
 
@@ -400,16 +422,31 @@ class ModelTraining:
         """
         Выводит метрики качества: accuracy, precision, recall, f1-score
         """
-        acc = accuracy_score(y_true, y_pred_classes)
-        print(f"\nAccuracy на {dataset_name} выборке: {acc:.4f}\n")
-
-        report = classification_report(
+        report_text = classification_report(
             y_true, 
             y_pred_classes,
             target_names=self.class_labels[self.stage],
             digits=4
         )
-        print(report)
+
+        # Логируем финальные метрики для MLflow
+        report_dict_raw = classification_report(
+            y_true, 
+            y_pred_classes,
+            target_names=self.class_labels[self.stage],
+            digits=4,
+            output_dict=True
+        )
+        report_dict = cast(dict, report_dict_raw)
+
+        # Логируем метрики для всей выборки (accuracy, macro avg)
+        mlflow.log_metric(f"{dataset_name}_accuracy", report_dict['accuracy'])
+        mlflow.log_metric(f"{dataset_name}_macro_f1_score", report_dict['macro avg']['f1-score'])
+        mlflow.log_metric(f"{dataset_name}_weighted_f1_score", report_dict['weighted avg']['f1-score'])
+        mlflow.log_text(str(report_text), f"report_{dataset_name}.txt")
+
+        print(f"\nAccuracy на {dataset_name} выборке: {report_dict['accuracy']:.4f}\n")
+        print(report_text)
 
         # Матрица ошибок (опционально)
         class_names = self.class_labels[self.stage]  # список имён классов
@@ -445,5 +482,3 @@ class ModelTraining:
             'report': report,
             'confusion_matrix': cm
         }
-    
-

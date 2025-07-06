@@ -2,6 +2,8 @@
 
 import os
 import sys
+import mlflow
+
 # Добавляем папку src в PYTHONPATH, чтобы можно было импортировать модули
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
@@ -24,29 +26,38 @@ manager.pipeline()
 preprocessor = DatasetPreprocessing()
 preprocessor.pipeline()
 
-# Обучение модели top
-trainer = ModelTraining('stage2', 'top')
-trainer.pipeline(mode='eval')
+# Устанавливаем имя эксперимента
+mlflow.set_experiment("ECG R-peak Classification")
 
-# Обучение модели top
-# trainer = ModelTraining('stage3', 'top')
-# trainer.pipeline(mode='full')
+# Запускаем сессию отслеживания
+with mlflow.start_run():
+    # Логируем, с какой стадией и префиксом мы работаем
+    mlflow.log_param("stage", "stage1")
+    mlflow.log_param("prefix", "top")
 
-# Оценка модели top
-# trainer = ModelTraining('stage2', 'top')
-# trainer.pipeline(mode='eval')
+    # Обучение модели top
+    trainer = ModelTraining('stage1', 'top')
+    trainer.pipeline(mode='full')
 
-# Оценка модели cross
-# trainer = ModelTraining('stage1', 'cross')
-# trainer.pipeline(mode='eval')
+    # Обучение модели top
+    # trainer = ModelTraining('stage3', 'top')
+    # trainer.pipeline(mode='full')
 
-# Обучение модели uni_1
-# trainer = ModelTraining('uni_1')
-# trainer.pipeline(mode='full')
+    # Оценка модели top
+    # trainer = ModelTraining('stage2', 'top')
+    # trainer.pipeline(mode='eval')
 
-# Обучение модели uni_2
-# trainer = ModelTraining('uni_2')
-# trainer.pipeline(mode='full')
+    # Оценка модели cross
+    # trainer = ModelTraining('stage1', 'cross')
+    # trainer.pipeline(mode='eval')
+
+    # Обучение модели uni_1
+    # trainer = ModelTraining('uni_1')
+    # trainer.pipeline(mode='full')
+
+    # Обучение модели uni_2
+    # trainer = ModelTraining('uni_2')
+    # trainer.pipeline(mode='full')
 
 # Инференс модели
 producer = Production()

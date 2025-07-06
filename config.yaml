@@ -10,13 +10,16 @@ paths:
   
 params:
   batch_size: 1024
-  epochs: 100
-  patience: 50
+  epochs: 1000
+  patience_early_stop: 500
   learning_rate: 0.001
+  min_learning_rate: 0.00001
+  patience_reduce_lr: 200
+  factor_reduce_lr: 0.2
 
 data:
   add_derivatives: False
-  add_augmentations: True
+  add_augmentations: False
   size_augmentations: 6000
   test_size: 0.15
   val_size: 0.15
