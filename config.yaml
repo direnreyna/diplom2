@@ -23,7 +23,7 @@ data:
   normalization: "minmax"
   window_size: 360
   aug_shift_size: 20  
-  analytics: False
+  analytics: True
   dataset_name: "dataset.npz"
   
 stages:
@@ -32,3 +32,11 @@ stages:
 
 augs:
   stage2: [0, 0, 0, 3000, 0, 3000, 3000]
+  
+class_labels:
+  stage1: ["Good (N+N)", "Alert"]
+  stage2_2: ["Attention", "Alarm"] # Вы можете удалить неиспользуемые стадии
+  stage2a: ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'VEB', 'Fusion', 'Q']
+  stage2: ['N', 'L', 'R', 'subSVEB', 'VEB', 'Fusion', 'Q']
+  stage3: ['A', 'a', 'J', 'e', 'j']
+  stage01: ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'V', 'E', 'F', '+', 'Q']

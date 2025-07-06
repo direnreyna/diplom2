@@ -1,10 +1,11 @@
-# dataset_preprocessing
+# src/dataset_preprocessing
 
 import pandas as pd
 from config import config
 
 from dataset_loading import DatasetLoading
 from dataset_analyzer import DatasetAnalyze
+from dataset_filtering import DatasetFiltering
 from dataset_preparing import DatasetPreparing
 
 class DatasetPreprocessing():
@@ -40,6 +41,7 @@ class DatasetPreprocessing():
         # === Прочие параметры ===
         self.target_channel_name_1 = ''
         self.target_channel_name_2 = ''
+        self.channels_per_patient = {}                          # Каналы у пациентов
 
     def load_dataset(self):
         """Загрузка датасета"""
@@ -47,23 +49,18 @@ class DatasetPreprocessing():
         self.df_all_signals, self.df_all_annotations, self.patient_ids = loader.pipeline()
         return self
     
-    def analyze_channels(self):
-        """Анализ датасета"""
-        analyzer = DatasetAnalyze(self.df_all_signals, self.df_all_annotations, self.patient_ids)
-        (self.target_channel_name_1,
-        self.target_channel_name_2,
-        self.df_top_signals,
-        self.df_top_annotations, 
-        self.df_cross_signals, 
-        self.df_cross_annotations, 
-        self.df_united_signals_1, 
-        self.df_united_annotation_1, 
-        self.df_united_signals_2, 
-        self.df_united_annotation_2,
-        self.df_total_signals,
-        self.df_total_annotations) = analyzer.pipeline()
+    def filter_data(self):
+        """Запускает фильтрацию данных по каналам."""
+        filterer = DatasetFiltering(self)
+        filterer.run()
         return self
     
+    def analyze_dataset(self):
+        """Запускает исследовательский анализ данных (EDA)."""
+        analyzer = DatasetAnalyze(self)
+        analyzer.run()
+        return self
+
     def prepare_data(self):
         """Формирование окон, меток, разделение на train/val/test"""
         preparer = DatasetPreparing(
@@ -80,12 +77,12 @@ class DatasetPreprocessing():
         self.df_total_signals,
         self.df_total_annotations)
         preparer.pipeline()
-    
+        return self
+        
     def pipeline(self):
         """Полный пайплайн от загрузки до подготовки (X, y)"""
         loader = DatasetLoading()
-        if not loader.check_datasets_exists():
-            self.load_dataset().analyze_channels().prepare_data()
-        
+        # if not loader.check_datasets_exists():
+        #     self.load_dataset().filter_data().analyze_dataset().prepare_data()
         ## Временно для теста аналитики
-        # self.load_dataset().analyze_channels()
+        self.load_dataset().filter_data().analyze_dataset()

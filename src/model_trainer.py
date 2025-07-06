@@ -7,17 +7,14 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 from self_attention_block import SelfAttentionBlock
-#from src.layers.self_attention_block import SelfAttentionBlock
 from typing import Tuple, List
 from config import config
-from tqdm import tqdm
+
 from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, InputLayer, Activation, Conv1D
+from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, InputLayer, Activation, Conv1D, Input
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
-from tensorflow.keras import layers, Model, losses
-
 
 class ModelTraining:
     def __init__(self, stage, prefix) -> None:
@@ -26,19 +23,14 @@ class ModelTraining:
         self.prefix = prefix
         self.model = None
         self.history = None
-        self.class_labels = {
-            'stage1': ["Good (N+N)", "Alert"],
-            'stage2_2': ["Attention", "Alarm"],
-            'stage2a': ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'VEB', 'Fusion', 'Q'],
-            'stage2': ['N', 'L', 'R', 'subSVEB', 'VEB', 'Fusion', 'Q'],
-            'stage3': ['A', 'a', 'J', 'e', 'j'],
-            'stage01': ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'V', 'E', 'F', '+', 'Q'],
-        }
+        self.class_labels = config['class_labels']
         
-        self.best_model_file = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model']}")                ## Сохраненная модель
-        #self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{config['paths']['best_model_weights']}") ## Сохраненные веса
+        # Имя файла для ПОЛНОЙ модели (архитектура, веса, оптимизатор)
+        self.best_model_file = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{self.stage}_{config['paths']['best_model']}")   ## Сохраненная модель для стадии
+        
+        # Имя файла ТОЛЬКО для ВЕСОВ
         self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{self.stage}_{config['paths']['best_model_weights']}") ## Сохраненные веса
-        
+
         self.X_train, self.y_train, self.X_val, self.y_val, self.X_test, self.y_test = self.load_dataset()
         num_classes = len(np.unique(self.y_train))      # 2: Good (0), Alert (1)
         os.makedirs(config['paths']['model_dir'], exist_ok=True)
@@ -56,13 +48,14 @@ class ModelTraining:
         data = np.load(file_dataset)
         return (data['X_train'], data['y_train'], data['X_val'], data['y_val'], data['X_test'], data['y_test'])
     
-    def pipeline(self, mode : str = 'full') -> None:
+    def pipeline(self, mode: str = 'full') -> None:
         """
         Полный пайплайн: подготовка модели → обучение → оценка → сохранение лучшей модели
 
         :param управляет логикой пайплайна mode:
             - 'full' (подготовка модели → обучение → оценка → сохранение лучшей модели)
             - 'eval' (только инференс)
+        :param force_rebuild: True, если изменена архитектура и обучение нужно начать с нуля, игнорируя сохраненные веса.
         """
 
         self._create_model()
@@ -71,7 +64,7 @@ class ModelTraining:
         self._evaluate_on_val()
         self.evaluate_model()
 
-    def _categorical_focal_loss(self, gamma: float = 2.0, alpha: List[float] = [1.0, 1.0, 1.0, 1.0]):
+    def _categorical_focal_loss(self, gamma: float = 2.0, alpha: List[float] | None = None):
         """
         Focal Loss для многоклассовой классификации
         :param gamma: фокусировка на сложных примерах
@@ -94,24 +87,69 @@ class ModelTraining:
 
             return fl  # минимизируем эту величину
         return loss
-        
+
     def f1_score(self, y_true, y_pred):
-        y_pred = tf.round(tf.clip_by_value(y_pred, 0, 1))
+        is_multiclass = y_true.shape[-1] is not None and y_true.shape[-1] > 1
 
-        tp = tf.reduce_sum(y_true * y_pred, axis=0)
-        fp = tf.reduce_sum((1 - y_true) * y_pred, axis=0)
-        fn = tf.reduce_sum(y_true * (1 - y_pred), axis=0)
+        # Корректная логика для мультиклассовой классификации
+        if is_multiclass:
+            y_pred_labels = tf.argmax(y_pred, axis=-1)
+            y_true_labels = tf.argmax(y_true, axis=-1)
+            
+            cm = tf.math.confusion_matrix(y_true_labels, y_pred_labels, num_classes=tf.shape(y_true)[-1])
+            
+            tp = tf.linalg.diag_part(cm)
+            fp = tf.reduce_sum(cm, axis=0) - tp
+            fn = tf.reduce_sum(cm, axis=1) - tp
 
-        precision = tp / (tp + fp + 1e-7)
-        recall = tp / (tp + fn + 1e-7)
+            precision = tp / (tp + fp + 1e-7)
+            recall = tp / (tp + fn + 1e-7)
+            
+            f1 = 2 * precision * recall / (precision + recall + 1e-7)
+            
+            return tf.reduce_mean(f1)
 
-        f1 = 2 * precision * recall / (precision + recall + 1e-7)
-        return tf.reduce_mean(f1)
+        # Корректная логика для бинарной классификации
+        else:
+            y_pred_rounded = tf.round(tf.clip_by_value(y_pred, 0, 1))
+
+            tp = tf.reduce_sum(y_true * y_pred_rounded)
+            fp = tf.reduce_sum((1 - y_true) * y_pred_rounded)
+            fn = tf.reduce_sum(y_true) - tp
+
+            precision = tp / (tp + fp + 1e-7)
+            recall = tp / (tp + fn + 1e-7)
+
+            f1 = 2 * precision * recall / (precision + recall + 1e-7)
+            return f1
 
     def _create_model(self):
         """
-        Создает и компилирует модель
+        Создает или загружает модель, реализуя логику дообучения.
         """
+        #################################################################################
+        # Сценарий 1: ДООБУЧЕНИЕ С ТЕМИ ЖЕ ПАРАМЕТРАМИ или ОЦЕНКА
+        #################################################################################
+        # Если существует файл полной модели, мы всегда предпочитаем его,
+        # так как он содержит состояние оптимизатора.
+        if os.path.exists(self.best_model_file):
+            print(f"Обнаружен файл полной модели. Загружаем из: {self.best_model_file}")
+            self.model = load_model(
+                self.best_model_file, 
+                custom_objects={'SelfAttentionBlock': SelfAttentionBlock, 'f1_score': self.f1_score}
+            )
+            print("Полная модель успешно загружена, включая состояние оптимизатора.")
+            self.model.summary()
+            return
+        
+        # Если мы здесь, значит файла полной модели нет.
+        # Это сценарий ПЕРВОГО ЗАПУСКА или ИЗМЕНЕНИЯ АРХИТЕКТУРЫ.
+        print("Файл полной модели не найден. Создаем новую архитектуру...")
+
+        #################################################################################
+        # Сценарий 2: ПЕРВЫЙ ЗАПУСК или ИЗМЕНЕНИЕ АРХИТЕКТУРЫ.
+        #################################################################################
+
         #################################################################################
         if self.stage in self.multi_stages:
             class_counts = np.sum(self.y_train, axis=0)
@@ -136,7 +174,6 @@ class ModelTraining:
         print(f"Создаем новую модель.")
         model = Sequential()
         model.add(InputLayer(input_shape=input_shape))
-
         model.add(Conv1D(64, (3), activation='relu', input_shape=input_shape))
         model.add(SelfAttentionBlock(use_projection=True))
         model.add(Conv1D(128, (3), activation='relu'))
@@ -170,21 +207,28 @@ class ModelTraining:
             metrics=stage_metrics
         )
         model.summary()
-       
-        # Загрузка сохраненной дообученной модели
-        if os.path.exists(self.best_model_file_weights):
-            print(f"Загружаем модель с диска: {self.best_model_file_weights}.")
-            status = model.load_weights(self.best_model_file_weights)                          ## загружаем только веса
-            print(status)
-            # self.model = load_model(self.best_model_file_weights)                   ## загружаем всю модель
-            print("У модели Оптимизатор:", model.optimizer.get_config())
 
+        #################################################################################
+        # Сценарий 3: Дообучение модели без ИЗМЕНЕНИЯ АРХИТЕКТУРЫ (изменение оптимизатора)
+        #################################################################################
+        # Загрузка весов сохраненной дообученной модели
+        if os.path.exists(self.best_model_file_weights):
+            print(f"Загружаем ВЕСА в новую архитектуру из: {self.best_model_file_weights}.")
+            try:
+                model.load_weights(self.best_model_file_weights)
+                print("Веса успешно загружены.")
+            except ValueError as e:
+                print(f"ПРЕДУПРЕЖДЕНИЕ: Не удалось загрузить веса. Ошибка: {e}. Обучение начнется с нуля.")
         self.model = model
 
     def _train_model(self):
         """
         Обучает модель на тренировочных данных с валидацией
         """
+        if self.model is None:
+            print("ОШИБКА: Модель не была создана или загружена. Прерывание обучения.")
+            return
+
         epochs=config['params']['epochs']
         batch_size=config['params']['batch_size']
 
@@ -193,12 +237,21 @@ class ModelTraining:
         else:
             monitor = 'val_accuracy'
 
-        best_model = ModelCheckpoint(
-            #self.best_model_file,          ## сохраняем всю модель
-            self.best_model_file_weights,   ## сохраняем только веса
+        ## сохраняем всю модель
+        best_full_model = ModelCheckpoint( 
+            self.best_model_file,               
+            monitor=monitor,               
+            save_best_only=True,                ## сохраняем лучшую модель...
+            save_weights_only=False,            ## ... при этом НЕ только веса
+            mode='max',                    
+            verbose=1)                     
+        
+        ## сохраняем только веса
+        best_weights_only = ModelCheckpoint(    
+            self.best_model_file_weights,       
             monitor=monitor,
-            save_best_only=True,            ## сохраняем лучшую модель...
-            save_weights_only=True,         ## ... при этом только веса
+            save_best_only=True,                ## сохраняем лучшую модель...
+            save_weights_only=True,             ## ... при этом только веса
             mode='max',
             verbose=1)
 
@@ -214,7 +267,7 @@ class ModelTraining:
             validation_data=(self.X_val, self.y_val),
             epochs=epochs,
             batch_size=batch_size,
-            callbacks=[best_model, early_stop],
+            callbacks=[best_full_model, best_weights_only, early_stop],
             verbose=1
         )
         self.history = history
@@ -319,11 +372,6 @@ class ModelTraining:
         else:
             y_true = self.y_val.astype(int).flatten()
             y_pred_classes = (y_pred > 0.5).astype(int).flatten()
-
-        class_names = self.class_labels[self.stage]  # список имён классов
-        cm = confusion_matrix(y_true, y_pred_classes)
-        print("Confusion matrix:\n", cm)
-        self.plot_confusion_matrix(cm, class_names=class_names)
 
         self._print_evaluation(y_true, y_pred_classes, dataset_name="валидационной")
         

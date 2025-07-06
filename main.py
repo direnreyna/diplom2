@@ -26,7 +26,7 @@ preprocessor.pipeline()
 
 # Обучение модели top
 trainer = ModelTraining('stage2', 'top')
-trainer.pipeline(mode='full')
+trainer.pipeline(mode='eval')
 
 # Обучение модели top
 # trainer = ModelTraining('stage3', 'top')

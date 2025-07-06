@@ -67,7 +67,7 @@ class DatasetLoading:
         Проверяет наличие сохраненных ранее датасетов на диске
 
         :return:
-            - True/False - если есть все 4 файла
+            - True/False - если есть все файлы
         """
         exists_all = True
         dataset_path = config['paths']['data_dir']
