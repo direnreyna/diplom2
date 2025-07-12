@@ -41,9 +41,6 @@ class DatasetAnalyze:
             self._visualize_channel_distribution()                              # График: распределение популярности каналов (barplot)
             self._visualize_patient_channel_matrix()                            # Heatmap: матрица наличия каналов по пациентам
 
-            # Добавление в аннотации ритмов из Aux
-        self._add_rhythm_annotations()                                          # Добавляет колонку Current_Rhythm в df_all_annotations на основе колонки Aux
-        if self.check_analytics:
             self._analyze_Current_Rhythm_statistics(self.container.df_all_annotations)    # Формирует общую статистику по Aux-событиям
             self._analyze_patient_rhythm_type_stats()                           # Формирует статистику Aux-событий по каждоиу пациенту
             self._binary_rhythm_type_analysis()                                 # Анализирует баланс нормальных R-пиков в нормальных Aux-событиях
@@ -130,40 +127,6 @@ class DatasetAnalyze:
         plt.tight_layout()
         plt.savefig(os.path.join(self.temp_dir, "patient_channel_matrix.png"))
         plt.show()
-
-    def _add_rhythm_annotations(self) -> None:
-        """
-        Добавляет колонку 'Current_Rhythm' в self.container.df_all_annotations.
-        Значение распространяется до следующего изменения ритма.
-        """
-
-        # Извлекаем только строки с ритмическими аннотациями
-        rhythm_mask = self.container.df_all_annotations['Aux'].notna() & self.container.df_all_annotations['Aux'].str.startswith('(')
-        rhythm_df = self.container.df_all_annotations.loc[rhythm_mask, ['Sample', 'Patient_id', 'Aux']].copy()
-
-        # Убираем скобку '(' из значения
-        rhythm_df['Current_Rhythm'] = rhythm_df['Aux'].str[1:]  # например, '(AFIB' → 'AFIB'
-
-        # Удаляем исходную колонку Aux (если не нужна далее)
-        rhythm_df.drop(columns=['Aux'], inplace=True)
-
-        # Объединяем обратно по Patient_id и Sample
-        # НО нам нужно заполнить NaN вниз — forward fill по каждому пациенту
-        self.container.df_all_annotations = pd.merge(
-            self.container.df_all_annotations,
-            rhythm_df[['Sample', 'Patient_id', 'Current_Rhythm']],
-            on=['Sample', 'Patient_id'],
-            how='left'
-        )
-
-        # Заполняем пропуски в Current_Rhythm
-        # Сортируем по Patient_id и Sample, чтобы заполнение шло по времени
-        self.container.df_all_annotations.sort_values(['Patient_id', 'Sample'], inplace=True)
-        self.container.df_all_annotations['Current_Rhythm'] = (
-            self.container.df_all_annotations.groupby('Patient_id', group_keys=False)['Current_Rhythm'].apply(lambda x: x.ffill())
-        )
-
-        #print("Колонка 'Current_Rhythm' добавлена к аннотациям.")
 
     def _analyze_Current_Rhythm_statistics(self, df_all_annotations) -> None:
         """

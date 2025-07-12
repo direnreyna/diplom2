@@ -1,8 +1,9 @@
 # self_attention_block.py
 
 import tensorflow as tf
-from tensorflow.keras import layers, Model
+from tensorflow.keras import layers, Model, saving
 
+@tf.keras.saving.register_keras_serializable()
 class SelfAttentionBlock(layers.Layer):
     def __init__(self, use_projection=True, **kwargs):
         """

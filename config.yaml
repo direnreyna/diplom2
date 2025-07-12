@@ -9,13 +9,15 @@ paths:
   best_model_weights: "best_model.weights.h5"
   
 params:
-  batch_size: 1024
-  epochs: 1000
-  patience_early_stop: 500
-  learning_rate: 0.001
-  min_learning_rate: 0.00001
-  patience_reduce_lr: 200
+  batch_size: 256
+  epochs: 50
+  patience_early_stop: 20
+  learning_rate: 0.0001
+  min_learning_rate: 0.000001
+  patience_reduce_lr: 10
   factor_reduce_lr: 0.2
+  #attention_type: "multi_head_attention"  
+  attention_type: "self_attention"  
 
 data:
   add_derivatives: False
@@ -26,7 +28,7 @@ data:
   normalization: "minmax"
   window_size: 360
   aug_shift_size: 20  
-  analytics: True
+  analytics: False
   dataset_name: "dataset.npz"
   
 stages:

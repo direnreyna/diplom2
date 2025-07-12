@@ -6,23 +6,96 @@ import tensorflow as tf
 import seaborn as sns
 import matplotlib.pyplot as plt
 import mlflow
-import mlflow.keras
+# import mlflow.keras
+# import mlflow.tensorflow
 
 from self_attention_block import SelfAttentionBlock
-from typing import Tuple, List, cast
+from typing import Tuple, cast
 from config import config
 
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras import layers, Model, losses, saving, Input
 from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, InputLayer, Activation, Conv1D, Input
+from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, InputLayer, Activation, Conv1D, MaxPooling1D
+from tensorflow.keras.layers import MultiHeadAttention, LayerNormalization
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
+@tf.keras.saving.register_keras_serializable()
+class CategoricalFocalLoss(tf.keras.losses.Loss): 
+    """Классовая реализация Focal Loss. Гарантирует корректную сериализацию."""    
+
+    def __init__(self, gamma=2.0, alpha=[1.0, 1.0, 1.0, 1.0], name="categorical_focal_loss", **kwargs): 
+        super().__init__(name=name, **kwargs) 
+        self.gamma = gamma 
+        self.alpha = alpha 
+
+    def call(self, y_true, y_pred): 
+        alpha_tensor = tf.constant(self.alpha, dtype=tf.float32) 
+
+        y_pred = tf.clip_by_value(y_pred, 1e-7, 1 - 1e-7) 
+        pt = tf.reduce_sum(y_true * y_pred, axis=-1) 
+        weight = tf.reduce_sum(y_true * alpha_tensor, axis=-1) 
+        fl = -weight * tf.pow(1.0 - pt, self.gamma) * tf.math.log(pt) 
+        return fl 
+
+    def get_config(self): 
+        # Этот метод позволяет Keras сохранять параметры loss'a 
+        config = super().get_config() 
+        config.update({ 
+            "gamma": self.gamma, 
+            "alpha": self.alpha 
+        }) 
+        return config 
+
+@tf.keras.saving.register_keras_serializable()
+def f1_score(y_true, y_pred):
+    is_multiclass = y_true.shape[-1] is not None and y_true.shape[-1] > 1
+
+    # Корректная логика для мультиклассовой классификации
+    if is_multiclass:
+        y_pred_labels = tf.argmax(y_pred, axis=-1)
+        y_true_labels = tf.argmax(y_true, axis=-1)
+        
+        cm = tf.math.confusion_matrix(y_true_labels, y_pred_labels, num_classes=y_true.shape[-1])
+        
+        tp = tf.linalg.diag_part(cm)
+        fp = tf.reduce_sum(cm, axis=0) - tp
+        fn = tf.reduce_sum(cm, axis=1) - tp
+
+        tp = tf.cast(tp, dtype=tf.float32)
+        fp = tf.cast(fp, dtype=tf.float32)
+        fn = tf.cast(fn, dtype=tf.float32)
+
+        precision = tp / (tp + fp + 1e-7)
+        recall = tp / (tp + fn + 1e-7)
+        
+        f1 = 2 * precision * recall / (precision + recall + 1e-7)
+        
+        return tf.reduce_mean(f1)
+
+    # Корректная логика для бинарной классификации
+    else:
+        y_pred_rounded = tf.round(tf.clip_by_value(y_pred, 0, 1))
+
+        tp = tf.reduce_sum(y_true * y_pred_rounded)
+        fp = tf.reduce_sum((1 - y_true) * y_pred_rounded)
+        fn = tf.reduce_sum(y_true) - tp
+
+        precision = tp / (tp + fp + 1e-7)
+        recall = tp / (tp + fn + 1e-7)
+
+        f1 = 2 * precision * recall / (precision + recall + 1e-7)
+        return f1
+        
 class ModelTraining:
-    def __init__(self, stage, prefix) -> None:
+    def __init__(self, stage, prefix, load_from_mlflow=False, mlflow_run_id=None) -> None:
         self.stage = stage
         self.multi_stages = config['stages']['multi']
         self.prefix = prefix
+        self.load_from_mlflow = load_from_mlflow
+        self.mlflow_run_id = mlflow_run_id
         self.model = None
         self.history = None
         self.class_labels = config['class_labels']
@@ -70,69 +143,45 @@ class ModelTraining:
         self._evaluate_on_val()
         self.evaluate_model()
 
-    def _categorical_focal_loss(self, gamma: float = 2.0, alpha: List[float] = [1.0, 1.0, 1.0, 1.0]):
-        """
-        Focal Loss для многоклассовой классификации
-        :param gamma: фокусировка на сложных примерах
-        :param alpha: список весов для каждого класса
-        """
-        alpha_tensor = tf.constant(alpha, dtype=tf.float32)
-
-        def loss(y_true, y_pred):
-            # Сглаживаем предсказания
-            y_pred = tf.clip_by_value(y_pred, 1e-7, 1 - 1e-7)
-
-            # Вероятность истинного класса
-            pt = tf.reduce_sum(y_true * y_pred, axis=-1)
-
-            # Веса альфа для истинного класса
-            weight = tf.reduce_sum(y_true * alpha_tensor, axis=-1)
-
-            # Формула Focal Loss
-            fl = -weight * tf.pow(1.0 - pt, gamma) * tf.math.log(pt)
-
-            return fl  # минимизируем эту величину
-        return loss
-
-    def f1_score(self, y_true, y_pred):
-        is_multiclass = y_true.shape[-1] is not None and y_true.shape[-1] > 1
-
-        # Корректная логика для мультиклассовой классификации
-        if is_multiclass:
-            y_pred_labels = tf.argmax(y_pred, axis=-1)
-            y_true_labels = tf.argmax(y_true, axis=-1)
-            
-            cm = tf.math.confusion_matrix(y_true_labels, y_pred_labels, num_classes=y_true.shape[-1])
-            
-            tp = tf.linalg.diag_part(cm)
-            fp = tf.reduce_sum(cm, axis=0) - tp
-            fn = tf.reduce_sum(cm, axis=1) - tp
-
-            precision = tp / (tp + fp + 1e-7)
-            recall = tp / (tp + fn + 1e-7)
-            
-            f1 = 2 * precision * recall / (precision + recall + 1e-7)
-            
-            return tf.reduce_mean(f1)
-
-        # Корректная логика для бинарной классификации
-        else:
-            y_pred_rounded = tf.round(tf.clip_by_value(y_pred, 0, 1))
-
-            tp = tf.reduce_sum(y_true * y_pred_rounded)
-            fp = tf.reduce_sum((1 - y_true) * y_pred_rounded)
-            fn = tf.reduce_sum(y_true) - tp
-
-            precision = tp / (tp + fp + 1e-7)
-            recall = tp / (tp + fn + 1e-7)
-
-            f1 = 2 * precision * recall / (precision + recall + 1e-7)
-            return f1
-
     def _create_model(self):
         """
-        Создает или загружает модель, реализуя логику дообучения.
+        Создает или загружает модель, реализуя логику дообучения:
+
+        Сценарий 0: ПРИОРИТЕТНАЯ ЗАГРУЗКА ИЗ MLFLOW - Если включен флаг load_from_mlflow
+        Сценарий 1: ДООБУЧЕНИЕ С ТЕМИ ЖЕ ПАРАМЕТРАМИ или ОЦЕНКА - Если существует файл лучшей модели
+        Сценарий 2: ПЕРВЫЙ ЗАПУСК или ИЗМЕНЕНИЕ АРХИТЕКТУРЫ - Если файла лучшей модели нет
+        Сценарий 3: Дообучение модели без ИЗМЕНЕНИЯ АРХИТЕКТУРЫ (изменение оптимизатора) - Загрузка весов сохраненной дообученной модели
         """
+
+        #################################################################################
+        # Сценарий 0: Приоритетная загрузка из MLflow
+        #################################################################################
+        if self.load_from_mlflow and self.mlflow_run_id:
+            print(f"Приоритетная загрузка модели из MLflow run_id: {self.mlflow_run_id}")
+            try:
+                # Формируем URI для загрузки артефакта модели, который был
+                model_uri = f"runs:/{self.mlflow_run_id}/model"
+
+                # Создаем словарь с кастомными объектами для загрузки
+                custom_objects_to_load = {
+                    'SelfAttentionBlock': SelfAttentionBlock,
+                    'CategoricalFocalLoss': CategoricalFocalLoss,
+                    'f1_score': f1_score
+                }
+                loaded_model = mlflow.keras.load_model(model_uri, custom_objects=custom_objects_to_load)
+                # Явно указываем анализатору, что это модель Keras
+                self.model = cast(Model, loaded_model)
+                if self.model:
+                    print("Модель из MLflow успешно загружена.")
+                    self.model.summary()
+                    return
+                else:
+                    print("ОШИБКА: MLflow вернул None вместо модели без вызова исключения.")
+
+            except Exception as e:
+                print(f"ОШИБКА: Не удалось загрузить модель из MLflow. Ошибка: {e}")
+                print("Продолжаем выполнение по стандартной логике (поиск локальных файлов).")
+
         #################################################################################
         # Сценарий 1: ДООБУЧЕНИЕ С ТЕМИ ЖЕ ПАРАМЕТРАМИ или ОЦЕНКА
         #################################################################################
@@ -140,31 +189,55 @@ class ModelTraining:
         # так как он содержит состояние оптимизатора.
         if os.path.exists(self.best_model_file):
             print(f"Обнаружен файл полной модели. Загружаем из: {self.best_model_file}")
+
+            ### custom_objects_to_load = {
+            ###     'SelfAttentionBlock': SelfAttentionBlock,
+            ###     'CategoricalFocalLoss': CategoricalFocalLoss,
+            ###     'f1_score': f1_score
+            ### }
+            ### 
+            ### self.model = load_model( ## Изменена
+            ###     self.best_model_file, 
+            ###     custom_objects=custom_objects_to_load ## Изменена
+            ### )
+
             self.model = load_model(
                 self.best_model_file, 
-                custom_objects={'SelfAttentionBlock': SelfAttentionBlock, 'f1_score': self.f1_score}
+                # custom_objects={'SelfAttentionBlock': SelfAttentionBlock, 'f1_score': self.f1_score, 'loss':self._categorical_focal_loss}
+                custom_objects={
+                    'SelfAttentionBlock': SelfAttentionBlock
+                    #'f1_score': self.f1_score,
+                    #'loss': self.categorical_focal_loss
+                    ###'categorical_focal_loss': self.categorical_focal_loss
+                } 
             )
             print("Полная модель успешно загружена, включая состояние оптимизатора.")
             self.model.summary()
             return
         
-        # Если мы здесь, значит файла полной модели нет.
-        # Это сценарий ПЕРВОГО ЗАПУСКА или ИЗМЕНЕНИЯ АРХИТЕКТУРЫ.
-        print("Файл полной модели не найден. Создаем новую архитектуру...")
-
         #################################################################################
         # Сценарий 2: ПЕРВЫЙ ЗАПУСК или ИЗМЕНЕНИЕ АРХИТЕКТУРЫ.
+        # Если мы здесь, значит файла полной модели нет.
         #################################################################################
+        print("Файл полной модели не найден. Создаем новую архитектуру...")
 
         #################################################################################
         if self.stage in self.multi_stages:
             class_counts = np.sum(self.y_train, axis=0)
             total = np.sum(class_counts)
-            alpha_weights = np.sqrt(total / class_counts)               # или любая другая стратегия
+
+            # Попытка сильнее регулировать штрафы при дисбалансе классов.
+            #alpha_weights = total / class_counts                        # или любая другая стратегия
+            alpha_weights = np.sqrt(total / class_counts)             # или любая другая стратегия
+
             alpha_weights /= np.sum(alpha_weights)                      # нормализуем
-            stage_loss=self._categorical_focal_loss(gamma=2.0, alpha=alpha_weights)
+            #stage_loss=self.categorical_focal_loss(gamma=2.0, alpha=alpha_weights)
+            ##stage_loss=categorical_focal_loss(gamma=2.0, alpha=alpha_weights)
+            stage_loss=CategoricalFocalLoss(gamma=2.0, alpha=alpha_weights.tolist())
+
             last_layer = Dense(self.y_train.shape[1], activation='softmax')
-            stage_metrics=['accuracy', self.f1_score]
+            #stage_metrics=['accuracy', self.f1_score]
+            stage_metrics=['accuracy', f1_score]
             print(f">>> Число классов: {self.y_train.shape[1]}")
 
         else:
@@ -178,41 +251,104 @@ class ModelTraining:
         input_shape = self.X_train.shape[1:]            # форма экземпляра: (window_size, channels)
 
         print(f"Создаем новую модель.")
-        model = Sequential()
-        model.add(InputLayer(input_shape=input_shape))
-        model.add(Conv1D(64, (3), activation='relu', input_shape=input_shape))
-        model.add(SelfAttentionBlock(use_projection=True))
-        model.add(Conv1D(128, (3), activation='relu'))
-        model.add(SelfAttentionBlock(use_projection=True))
+        #################################################################################
+        # Переход на функциональное написание модели для введения MHA блоков и резидуал коннекшн
+        attention_type = config['params']['attention_type']
+        print(f"Создаем новую модель с типом внимания: {attention_type}")
+
+        input_layer_functional = Input(shape=input_shape)
         
-        ### model.add(Conv1D(64, (3), input_shape=input_shape))
-        ### model.add(BatchNormalization())
-        ### model.add(Activation('relu'))
-        ### model.add(SelfAttentionBlock(use_projection=True))
-        ### #model.add(Dropout(0.3))
-        ### model.add(Conv1D(128, (3)))
-        ### model.add(BatchNormalization())
-        ### model.add(Activation('relu'))
-        ### model.add(SelfAttentionBlock(use_projection=True))
-        ### #model.add(Dropout(0.3))
+        # Стартовая ветка для MULTI-HEAD ATTENTION
+        if attention_type == 'multi_head_attention':
+            
+            # Трансформерный блок 1
+            x = Conv1D(32, (3), activation='relu', kernel_regularizer=l2(0.0001))(input_layer_functional)
+            
+            attention_input = x
+            norm_input = LayerNormalization()(attention_input)
+            attention_output = MultiHeadAttention(num_heads=8, key_dim=32, dropout=0.1)(norm_input, norm_input)
+            x = attention_input + attention_output
 
-        model.add(LSTM(32, return_sequences=True))
-        model.add(Dropout(0.4))
+            ffn_input = x
+            norm_input = LayerNormalization()(ffn_input)
+            ffn_output = Dense(32*4, activation="relu", kernel_regularizer=l2(0.001))(norm_input)
+            ffn_output = Dense(32, kernel_regularizer=l2(0.001))(ffn_output)
+            x = ffn_input + ffn_output
 
-        model.add(LSTM(64, return_sequences=False))
-        model.add(Dropout(0.4))
+            # Трансформерный блок 2
+            x = Conv1D(64, (3), activation='relu', kernel_regularizer=l2(0.0001))(x)
 
-        model.add(Dense(32))
-        model.add(BatchNormalization())
-        model.add(Activation('relu'))
-        model.add(last_layer)
+            attention_input = x
+            norm_input = LayerNormalization()(attention_input)
+            attention_output = MultiHeadAttention(num_heads=8, key_dim=64, dropout=0.1)(norm_input, norm_input)
+            x = attention_input + attention_output
+
+            ffn_input = x
+            norm_input = LayerNormalization()(ffn_input)
+            ffn_output = Dense(64*4, activation="relu", kernel_regularizer=l2(0.001))(norm_input)
+            ffn_output = Dense(64, kernel_regularizer=l2(0.001))(ffn_output)
+            x = ffn_input + ffn_output
+
+
+            ### # Трансформерный блок 3
+            ### x = Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.001))(x)
+            ### attention_input_3 = x
+            ### attention_output_3 = MultiHeadAttention(num_heads=8, key_dim=128, dropout=0.1)(attention_input_3, attention_input_3)
+            ### x = LayerNormalization()(attention_input_3 + attention_output_3)
+
+        # Стартовая ветка для SELF-ATTENTION
+        else:
+            x = Conv1D(28, (3), activation='relu', kernel_regularizer=l2(0.001))(input_layer_functional)
+            x = SelfAttentionBlock(use_projection=True)(x)
+            x = Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.001))(x)
+            x = SelfAttentionBlock(use_projection=True)(x)
+
+        # Общая часть модели для обеих веток
+        ### x = LSTM(256, return_sequences=True, kernel_regularizer=l2(0.00001))(x)
+        ### x = Dropout(0.2)(x)
+
+        x = LSTM(256, return_sequences=True, kernel_regularizer=l2(0.001))(x)
+        x = Dropout(0.2)(x)
+        x = LSTM(128, return_sequences=False, kernel_regularizer=l2(0.001))(x)
+        x = Dropout(0.2)(x)
+        x = Dense(32, kernel_regularizer=l2(0.001))(x)
+        x = BatchNormalization()(x)
+        x = Activation('relu')(x)
+        output_layer = last_layer(x)
+        
+        ## Собираем модель, указывая входы и выходы
+        model = Model(inputs=input_layer_functional, outputs=output_layer)
 
         model.compile(
             optimizer=Adam(learning_rate=config['params']['learning_rate']),
             loss=stage_loss,
             metrics=stage_metrics
         )
+            
+        #################################################################################
+        ### Вариант Sequential для архива
+        ###    model = Sequential()
+        ###    model.add(InputLayer(input_shape=input_shape))
+        ###    model.add(Conv1D(128, (3), activation='relu', input_shape=input_shape, kernel_regularizer=l2(0.0001)))
+        ###    model.add(SelfAttentionBlock(use_projection=True))
+        ###    model.add(Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.0001)))
+        ###    model.add(SelfAttentionBlock(use_projection=True))
+        ###    model.add(LSTM(256, return_sequences=True, kernel_regularizer=l2(0.00001)))
+        ###    model.add(Dropout(0.4))
+        ###    model.add(LSTM(128, return_sequences=False, kernel_regularizer=l2(0.00001)))
+        ###    model.add(Dropout(0.4))
+        ###    model.add(Dense(32, kernel_regularizer=l2(0.00001)))
+        ###    model.add(BatchNormalization())
+        ###    model.add(Activation('relu'))
+        ###    model.add(last_layer)
+        ###
+        ###    model.compile(
+        ###        optimizer=Adam(learning_rate=config['params']['learning_rate']),
+        ###        loss=stage_loss,
+        ###        metrics=stage_metrics
+        ###    )
         model.summary()
+        #################################################################################
 
         #################################################################################
         # Сценарий 3: Дообучение модели без ИЗМЕНЕНИЯ АРХИТЕКТУРЫ (изменение оптимизатора)
@@ -271,13 +407,23 @@ class ModelTraining:
         reduce_lr = ReduceLROnPlateau(
             monitor=monitor,
             factor=config['params']['factor_reduce_lr'],
-            patience=config['params']['patience_early_stop'],
+            patience=config['params']['patience_reduce_lr'],
             min_lr=config['params']['min_learning_rate'],
             verbose=1)
 
-        # Включаем автологирование для Keras. Оно само будет логировать метрики на каждой эпохе.
-        mlflow.keras.autolog()
+        ### # Включаем автологирование для Keras. Оно само будет логировать метрики на каждой эпохе.
+        ### mlflow.keras.autolog(
+        ###     log_model_signatures=True,
+        ###     log_input_examples=False,
+        ###     log_models=True,
+        ###     disable=False
+        ### )
 
+        # Логируем лучшую модель как артефакт
+        # Это сохранит модель в папку mlruns, связанную с этим запуском
+        ### mlflow.keras.log_model(self.model, "best_model")
+        ### print("Модель успешно залогирована в MLflow.")
+        
         history = self.model.fit(
             self.X_train, self.y_train,
             validation_data=(self.X_val, self.y_val),
@@ -288,19 +434,7 @@ class ModelTraining:
         )
         self.history = history
 
-        # Логируем лучшую модель как артефакт
-        # Это сохранит модель в папку mlruns, связанную с этим запуском
-        mlflow.keras.log_model(self.model, "best_model")
-        print("Модель успешно залогирована в MLflow.")
-
         self._plot_training_history()
-
-        ### # Выведем пару случайных окон
-        ### for i in range(5):
-        ###     z = np.random.randint(1000)
-        ###     plt.plot(self.X_train[i+z])
-        ###     plt.title(f"Label: {self.y_train[i+z]}")
-        ###     plt.show()        
         
         print(f"[{self.prefix}] Обучение модели завершено")
 

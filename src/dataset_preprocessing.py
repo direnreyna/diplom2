@@ -82,7 +82,7 @@ class DatasetPreprocessing():
     def pipeline(self):
         """Полный пайплайн от загрузки до подготовки (X, y)"""
         loader = DatasetLoading()
-        # if not loader.check_datasets_exists():
-        #     self.load_dataset().filter_data().analyze_dataset().prepare_data()
+        if not loader.check_datasets_exists():
+            self.load_dataset().filter_data().analyze_dataset().prepare_data()
         ## Временно для теста аналитики
-        self.load_dataset().filter_data().analyze_dataset()
+        ### self.load_dataset().filter_data().analyze_dataset()

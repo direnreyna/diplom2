@@ -3,4 +3,5 @@ venv_diplom2/
 origins/
 temp/
 input/*
+mlruns/*
 src/__pycache__/
