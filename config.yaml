@@ -1,3 +1,12 @@
+execution:
+  stage: 'stage2'
+  prefix: 'top'
+  mode: 'full' ## 'full' для обучения / 'eval' для оценки
+  load_from_mlflow: False ## True / False
+  mlflow_run_id:
+    stage1: "13658bc131184bea8610a3531ac34d9b"
+    stage2: "555ba08ffe0349d5908c6e7871aa0f3d"
+
 paths:
   data_dir: "data"
   input_dir: "input"
@@ -11,10 +20,10 @@ paths:
 params:
   batch_size: 256
   epochs: 50
-  patience_early_stop: 20
-  learning_rate: 0.0001
+  patience_early_stop: 200
+  learning_rate: 0.001
   min_learning_rate: 0.000001
-  patience_reduce_lr: 10
+  patience_reduce_lr: 25
   factor_reduce_lr: 0.2
   #attention_type: "multi_head_attention"  
   attention_type: "self_attention"  
@@ -42,6 +51,6 @@ class_labels:
   stage1: ["Good (N+N)", "Alert"]
   stage2_2: ["Attention", "Alarm"] # Вы можете удалить неиспользуемые стадии
   stage2a: ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'VEB', 'Fusion', 'Q']
-  stage2: ['N', 'L', 'R', 'subSVEB', 'VEB', 'Fusion', 'Q']
+  stage2: ['N (по Aux не N)', 'L', 'R', 'subSVEB', 'VEB', 'Fusion', 'Q']
   stage3: ['A', 'a', 'J', 'e', 'j']
   stage01: ['N', 'L', 'R', 'A', 'a', 'J', 'e', 'j', 'V', 'E', 'F', '+', 'Q']

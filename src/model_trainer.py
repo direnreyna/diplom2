@@ -20,6 +20,7 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, In
 from tensorflow.keras.layers import MultiHeadAttention, LayerNormalization
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras import backend as K 
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
 @tf.keras.saving.register_keras_serializable()
@@ -88,7 +89,63 @@ def f1_score(y_true, y_pred):
 
         f1 = 2 * precision * recall / (precision + recall + 1e-7)
         return f1
+
+@tf.keras.saving.register_keras_serializable()
+class MacroF1Score(tf.keras.metrics.Metric):
+    """
+    Keras Metric для вычисления Macro F1-Score.
+    Накапливает Confusion Matrix за эпоху и вычисляет F1-меру один раз в конце.
+    """
+    def __init__(self, num_classes, name='macro_f1_score', **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.num_classes = num_classes
+        # Накапливаем компоненты Confusion Matrix
+        # Важно: инициализируем как tf.Variable, чтобы они были частью состояния метрики
+        self.tp = self.add_weight(name='tp', shape=(self.num_classes,), initializer='zeros')
+        self.fp = self.add_weight(name='fp', shape=(self.num_classes,), initializer='zeros')
+        self.fn = self.add_weight(name='fn', shape=(self.num_classes,), initializer='zeros')
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        # Преобразуем OHE в sparse labels
+        y_true_labels = tf.argmax(y_true, axis=-1)
+        y_pred_labels = tf.argmax(y_pred, axis=-1)
         
+        # Вычисляем Confusion Matrix для текущего батча
+        cm_batch = tf.math.confusion_matrix(y_true_labels, y_pred_labels, num_classes=self.num_classes)
+        
+        # Накапливаем TP, FP, FN
+        tp_batch = tf.linalg.diag_part(cm_batch)
+        fp_batch = tf.reduce_sum(cm_batch, axis=0) - tp_batch
+        fn_batch = tf.reduce_sum(cm_batch, axis=1) - tp_batch
+
+        self.tp.assign_add(tf.cast(tp_batch, dtype=tf.float32))
+        self.fp.assign_add(tf.cast(fp_batch, dtype=tf.float32))
+        self.fn.assign_add(tf.cast(fn_batch, dtype=tf.float32))
+
+    def result(self):
+        # Вычисляем Precision и Recall. Используем tf.math.divide_no_nan для стабильности.
+        precision = tf.math.divide_no_nan(self.tp, (self.tp + self.fp))
+        recall = tf.math.divide_no_nan(self.tp, (self.tp + self.fn))
+        
+        # Вычисляем F1-меру для каждого класса
+        f1_per_class = tf.math.divide_no_nan(2 * precision * recall, (precision + recall))
+        
+        # Возвращаем Macro F1 (среднее по всем классам)
+        return tf.reduce_mean(f1_per_class)
+
+    def reset_states(self):
+        # Сбрасываем накопленные состояния в начале каждой эпохи
+        K.set_value(self.tp, tf.zeros(shape=(self.num_classes,)))
+        K.set_value(self.fp, tf.zeros(shape=(self.num_classes,)))
+        K.set_value(self.fn, tf.zeros(shape=(self.num_classes,)))
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'num_classes': self.num_classes,
+        })
+        return config
+
 class ModelTraining:
     def __init__(self, stage, prefix, load_from_mlflow=False, mlflow_run_id=None) -> None:
         self.stage = stage
@@ -106,15 +163,12 @@ class ModelTraining:
         # Имя файла ТОЛЬКО для ВЕСОВ
         self.best_model_file_weights = os.path.join(config['paths']['model_dir'], f"{self.prefix}_{self.stage}_{config['paths']['best_model_weights']}") ## Сохраненные веса
 
-        self.X_train, self.y_train, self.X_val, self.y_val, self.X_test, self.y_test = self.load_dataset()
-        num_classes = len(np.unique(self.y_train))      # 2: Good (0), Alert (1)
+        ### self.X_train, self.y_train, self.X_val, self.y_val, self.X_test, self.y_test = self.load_dataset()
+        self.X_train, self.y_train, self.X_val, self.y_val, self.X_test, self.y_test, self.metadata_train, self.metadata_val, self.metadata_test = self.load_dataset()
+
         os.makedirs(config['paths']['model_dir'], exist_ok=True)
 
-        # Логируем параметры из конфига в MLflow
-        mlflow.log_params(config['params'])
-        mlflow.log_params(config['data'])
-
-    def load_dataset(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def load_dataset(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Загружает уже сохраненный ранее датасет"""
 
         dataset_path = config['paths']['data_dir']
@@ -124,8 +178,8 @@ class ModelTraining:
         file_dataset = os.path.join(dataset_path, file)
         if not os.path.exists(file_dataset):
             raise FileNotFoundError(f"Не обнаружен датасет: {file_dataset}")
-        data = np.load(file_dataset)
-        return (data['X_train'], data['y_train'], data['X_val'], data['y_val'], data['X_test'], data['y_test'])
+        data = np.load(file_dataset, allow_pickle=True)
+        return (data['X_train'], data['y_train'], data['X_val'], data['y_val'], data['X_test'], data['y_test'], data['metadata_train'], data['metadata_val'], data['metadata_test'])
     
     def pipeline(self, mode: str = 'full') -> None:
         """
@@ -166,7 +220,8 @@ class ModelTraining:
                 custom_objects_to_load = {
                     'SelfAttentionBlock': SelfAttentionBlock,
                     'CategoricalFocalLoss': CategoricalFocalLoss,
-                    'f1_score': f1_score
+                    'MacroF1Score': MacroF1Score                            ## Используем класс метрики вместо функции
+                    #'f1_score': f1_score
                 }
                 loaded_model = mlflow.keras.load_model(model_uri, custom_objects=custom_objects_to_load)
                 # Явно указываем анализатору, что это модель Keras
@@ -205,7 +260,8 @@ class ModelTraining:
                 self.best_model_file, 
                 # custom_objects={'SelfAttentionBlock': SelfAttentionBlock, 'f1_score': self.f1_score, 'loss':self._categorical_focal_loss}
                 custom_objects={
-                    'SelfAttentionBlock': SelfAttentionBlock
+                    'SelfAttentionBlock': SelfAttentionBlock,
+                    'MacroF1Score': MacroF1Score                            ## Используем класс метрики вместо функции
                     #'f1_score': self.f1_score,
                     #'loss': self.categorical_focal_loss
                     ###'categorical_focal_loss': self.categorical_focal_loss
@@ -227,17 +283,18 @@ class ModelTraining:
             total = np.sum(class_counts)
 
             # Попытка сильнее регулировать штрафы при дисбалансе классов.
-            #alpha_weights = total / class_counts                        # или любая другая стратегия
-            alpha_weights = np.sqrt(total / class_counts)             # или любая другая стратегия
-
-            alpha_weights /= np.sum(alpha_weights)                      # нормализуем
+            #alpha_weights = total / class_counts                     
+            alpha_weights = np.sqrt(total / class_counts)             
+            alpha_weights /= np.sum(alpha_weights)                                             # нормализуем
             #stage_loss=self.categorical_focal_loss(gamma=2.0, alpha=alpha_weights)
             ##stage_loss=categorical_focal_loss(gamma=2.0, alpha=alpha_weights)
             stage_loss=CategoricalFocalLoss(gamma=2.0, alpha=alpha_weights.tolist())
 
             last_layer = Dense(self.y_train.shape[1], activation='softmax')
             #stage_metrics=['accuracy', self.f1_score]
-            stage_metrics=['accuracy', f1_score]
+            ### stage_metrics=['accuracy', f1_score]
+            stage_metrics=['accuracy', MacroF1Score(num_classes=self.y_train.shape[1])]       ## Используем класс метрики вместо функции
+
             print(f">>> Число классов: {self.y_train.shape[1]}")
 
         else:
@@ -289,7 +346,6 @@ class ModelTraining:
             ffn_output = Dense(64, kernel_regularizer=l2(0.001))(ffn_output)
             x = ffn_input + ffn_output
 
-
             ### # Трансформерный блок 3
             ### x = Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.001))(x)
             ### attention_input_3 = x
@@ -298,20 +354,20 @@ class ModelTraining:
 
         # Стартовая ветка для SELF-ATTENTION
         else:
-            x = Conv1D(28, (3), activation='relu', kernel_regularizer=l2(0.001))(input_layer_functional)
+            x = Conv1D(128, (3), activation='relu', kernel_regularizer=l2(0.0001))(input_layer_functional)
             x = SelfAttentionBlock(use_projection=True)(x)
-            x = Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.001))(x)
+            x = Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.0001))(x)
             x = SelfAttentionBlock(use_projection=True)(x)
 
         # Общая часть модели для обеих веток
         ### x = LSTM(256, return_sequences=True, kernel_regularizer=l2(0.00001))(x)
         ### x = Dropout(0.2)(x)
 
-        x = LSTM(256, return_sequences=True, kernel_regularizer=l2(0.001))(x)
-        x = Dropout(0.2)(x)
-        x = LSTM(128, return_sequences=False, kernel_regularizer=l2(0.001))(x)
-        x = Dropout(0.2)(x)
-        x = Dense(32, kernel_regularizer=l2(0.001))(x)
+        x = LSTM(256, return_sequences=True, kernel_regularizer=l2(0.00001))(x)
+        x = Dropout(0.4)(x)
+        x = LSTM(128, return_sequences=False, kernel_regularizer=l2(0.00001))(x)
+        x = Dropout(0.4)(x)
+        x = Dense(32, kernel_regularizer=l2(0.00001))(x)
         x = BatchNormalization()(x)
         x = Activation('relu')(x)
         output_layer = last_layer(x)
@@ -375,7 +431,8 @@ class ModelTraining:
         batch_size=config['params']['batch_size']
 
         if self.stage in self.multi_stages:
-            monitor = 'val_f1_score'
+            #monitor = 'val_f1_score'
+            monitor = 'val_macro_f1_score'      ## Используем класс метрики вместо функции
         else:
             monitor = 'val_accuracy'
 
@@ -411,19 +468,6 @@ class ModelTraining:
             min_lr=config['params']['min_learning_rate'],
             verbose=1)
 
-        ### # Включаем автологирование для Keras. Оно само будет логировать метрики на каждой эпохе.
-        ### mlflow.keras.autolog(
-        ###     log_model_signatures=True,
-        ###     log_input_examples=False,
-        ###     log_models=True,
-        ###     disable=False
-        ### )
-
-        # Логируем лучшую модель как артефакт
-        # Это сохранит модель в папку mlruns, связанную с этим запуском
-        ### mlflow.keras.log_model(self.model, "best_model")
-        ### print("Модель успешно залогирована в MLflow.")
-        
         history = self.model.fit(
             self.X_train, self.y_train,
             validation_data=(self.X_val, self.y_val),
@@ -454,8 +498,8 @@ class ModelTraining:
 
         if self.stage in self.multi_stages:
 
-            f1_score = self.history.history['f1_score']
-            val_f1_score = self.history.history['val_f1_score']
+            macro_f1_score = self.history.history['macro_f1_score']
+            val_macro_f1_score = self.history.history['val_macro_f1_score']
 
             plt.figure(figsize=(18, 5))
 
@@ -468,9 +512,9 @@ class ModelTraining:
 
             # f1-score
             plt.subplot(1, 3, 2)
-            plt.plot(epochs, f1_score, 'b', label='Train f1-score')
-            plt.plot(epochs, val_f1_score, 'r', label='Valid f1-score')
-            plt.title(f'{self.prefix} - f1-score')
+            plt.plot(epochs, macro_f1_score, 'b', label='Train Macro f1-score')
+            plt.plot(epochs, val_macro_f1_score, 'r', label='Valid Macro f1-score')
+            plt.title(f'{self.prefix} - Macro f1-score')
             plt.legend()
 
             # Loss

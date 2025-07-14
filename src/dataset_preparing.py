@@ -65,9 +65,13 @@ class DatasetPreparing:
         Если не находит: создает и сохраняет (дифференцированно по каждому датасету)
         """
         if not self._is_exsist(stage, prefix):
-            X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top = self._create_dataset(df_signals, df_annotations, channel, stage, prefix)
-            self._save_dataset(X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top, prefix, stage)
-            del X_train_top, y_train_top, X_val_top, y_val_top, X_test_top, y_test_top
+            ### X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test = self._create_dataset(df_signals, df_annotations, channel, stage, prefix)
+            ### self._save_dataset(X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test, prefix, stage)
+            ### del X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test
+
+            X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test, metadata_full_unshuffled = self._create_dataset(df_signals, df_annotations, channel, stage, prefix)
+            self._save_dataset(X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test, metadata_full_unshuffled, prefix, stage)
+            del X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test, metadata_full_unshuffled
 
     def _is_exsist(self, stage:str, prefix:str) -> bool:
         """
@@ -85,7 +89,7 @@ class DatasetPreparing:
             print("Датасет не найден. Создаю...")
             return False
 
-    def _create_dataset(self, df_sign: pd.DataFrame, df_anno: pd.DataFrame, channel: Union[str, Tuple[str]], stage: str, prefix:str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def _create_dataset(self, df_sign: pd.DataFrame, df_anno: pd.DataFrame, channel: Union[str, Tuple[str]], stage: str, prefix:str) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Формирует обучающий/валидационный/тестовый датасет из исходных сигналов и аннотаций.
         Включает создание окон, добавление производных, разделение на выборки,
@@ -104,9 +108,14 @@ class DatasetPreparing:
                 - y_val: метки валидационной выборки
                 - X_test_norm: нормализованные тестовые данные
                 - y_test: метки тестовой выборки        
+                - metadata_train: метаданные по обучающей выборке
+                - metadata_val: метаданные по валидационной выборке
+                - metadata_test: метаданные по тестовой выборке
+                - metadata_full_unshuffled: все неперемешанные метаданные
         """
         self.stage = stage
-        self.prefix = prefix    
+        self.prefix = prefix
+        split_ids_path = os.path.join(config['paths']['data_dir'], f"{prefix}_stage1_split_ids.npz")
         
         print("\n[DEBUG] ДО _create_windows_and_labels")
         print("df_signals.head():\n", df_sign.head())
@@ -118,7 +127,8 @@ class DatasetPreparing:
         print("prefix:", self.prefix, "| type:", type(self.prefix))
 
         # Формируем окна
-        X_windowed, y = self._create_windows_and_labels(df_sign, df_anno, channel)
+        ### X_windowed, y, metadata = self._create_windows_and_labels(df_sign, df_anno, channel)
+        X_windowed, y, metadata_full_unshuffled = self._create_windows_and_labels(df_sign, df_anno, channel)
 
         ### ##### Блок дебаггинга
         ### if len(y) == 0:
@@ -145,8 +155,62 @@ class DatasetPreparing:
         print("X_derivated.shape:", X_derivated.shape)
         print("X_derivated.dtype:", X_derivated.dtype)
 
+
+        ###### # ВРЕМЕННО ВОЗВРАЩАЕМ СТАРУЮ, ПРОСТУЮ ЛОГИКУ РАЗДЕЛЕНИЯ
+        ###### print("!!! Включен режим отладки: независимое разделение для каждой стадии !!!")
+        ###### X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test = self._split_dataset(X_derivated, y, metadata_full_unshuffled)
+
         # Разделяем на выборки
-        X_train, y_train, X_val, y_val, X_test, y_test = self._split_dataset(X_derivated, y)
+        if stage == 'stage1':
+            # Сценарий 1: Мы на базовой стадии. Делаем разделение и сохраняем ID.
+            print(f"Выполняем первичное разделение для базовой стадии: {stage}")
+            X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test = self._split_dataset(X_derivated, y, metadata_full_unshuffled)
+            
+            # Сохраняем ID для будущих стадий
+            np.savez(split_ids_path, 
+                     train_ids=metadata_train, 
+                     val_ids=metadata_val, 
+                     test_ids=metadata_test)
+            print(f"ID разделения сохранены в: {split_ids_path}")
+        
+        else:
+            # Сценарий 2: Мы на наследуемой стадии. Загружаем ID и фильтруем данные.
+            print(f"Загружаем готовое разделение из {split_ids_path}")
+            if not os.path.exists(split_ids_path):
+                raise FileNotFoundError(f"Файл с ID разделения не найден. Сначала запустите подготовку для стадии stage1.")
+            
+            split_ids = np.load(split_ids_path, allow_pickle=True)
+            # Создаем неупорчядоченные множества для проверки принадлежности выборке
+            train_ids_set = {tuple(m) for m in split_ids['train_ids']}
+            val_ids_set = {tuple(m) for m in split_ids['val_ids']}
+            test_ids_set = {tuple(m) for m in split_ids['test_ids']}
+            
+            # Мы итерируемся по УПОРЯДОЧЕННОМУ массиву метаданных текущей стадии
+            # и собираем индексы в правильном порядке.
+            train_indices, val_indices, test_indices = [], [], []
+            for i, meta in enumerate(metadata_full_unshuffled):
+                meta_tuple = tuple(meta)
+                if meta_tuple in train_ids_set:
+                    train_indices.append(i)
+                elif meta_tuple in val_ids_set:
+                    val_indices.append(i)
+                elif meta_tuple in test_ids_set:
+                    test_indices.append(i)
+        
+            ### # Создаем быстрый индекс для текущих данных
+            ### current_data_map = {tuple(meta): i for i, meta in enumerate(metadata_full_unshuffled)}
+            ### # Фильтруем индексы
+            ### train_indices = [current_data_map[id_tuple] for id_tuple in train_ids_set if id_tuple in current_data_map]
+            ### val_indices = [current_data_map[id_tuple] for id_tuple in val_ids_set if id_tuple in current_data_map]
+            ### test_indices = [current_data_map[id_tuple] for id_tuple in test_ids_set if id_tuple in current_data_map]
+        
+            # Создаем выборки на основе отфильтрованных индексов
+            X_train, y_train, metadata_train = X_derivated[train_indices], y[train_indices], metadata_full_unshuffled[train_indices]
+            X_val, y_val, metadata_val = X_derivated[val_indices], y[val_indices], metadata_full_unshuffled[val_indices]
+            X_test, y_test, metadata_test = X_derivated[test_indices], y[test_indices], metadata_full_unshuffled[test_indices]
+
+        ### X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test = self._split_dataset(X_derivated, y, metadata)
+        ### X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test = self._split_dataset(X_derivated, y, metadata_full_unshuffled)
 
         print("\n[AFTER] _split_dataset")
         print("X_train[:5]:\n", X_train[:5])
@@ -184,8 +248,63 @@ class DatasetPreparing:
         print("X_val_norm.shape:", X_val_norm.shape)
         print("X_test_norm.shape:", X_test_norm.shape)
 
+
+        ########################################################################################
+        # --- ДИАГНОСТИЧЕСКИЙ БЛОК ПЕРЕД ВЫХОДОМ ---
+        if stage != 'stage1':
+            print("\n" + "="*20 + f" ДИАГНОСТИКА ДЛЯ STAGE {stage} " + "="*20)
+            
+            # Мы берем паспорта из УЖЕ созданной тестовой выборки
+            test_metadata_to_check = metadata_test 
+            
+            # Загружаем исходные аннотации для сверки
+            from src.dataset_loading import DatasetLoading
+            from src.dataset_filtering import DatasetFiltering
+            import pandas as pd
+            
+            loader = DatasetLoading()
+            _, df_ann_source, _ = loader.pipeline()
+            
+            class Tmp:
+                def __init__(self, df): self.df_all_annotations = df; self.patient_ids = df['Patient_id'].unique()
+            
+            cont = Tmp(df_ann_source)
+            filt = DatasetFiltering(cont)
+            filt._add_rhythm_annotations()
+            df_ann_source = filt.container.df_all_annotations
+
+            mismatch_count = 0
+            for i in range(min(10, len(test_metadata_to_check))):
+                # Данные из наших только что созданных выборок
+                meta_tuple = tuple(test_metadata_to_check[i])
+                y_from_dataset = np.argmax(y_test[i]) # Метка из нашего y_test
+                
+                # Ищем этот же пик в первоисточнике
+                p_id, s_id = str(meta_tuple[0]), int(meta_tuple[1])
+                original_row = df_ann_source[(df_ann_source['Patient_id'] == p_id) & (df_ann_source['Sample'] == s_id)].iloc[0]
+                
+                # Заново вычисляем, какой должна быть метка
+                self.stage = stage # Убедимся, что контекст правильный
+                ground_truth_label = self.is_label_valid_for_stage(original_row)
+                
+                if y_from_dataset != ground_truth_label:
+                    mismatch_count += 1
+                    print(f"!!! НАЙДЕНО НЕСООТВЕТСТВИЕ для пика {meta_tuple} !!!")
+                    print(f"    Метка в y_test:      {y_from_dataset}")
+                    print(f"    Метка из источника:  {ground_truth_label} (Type='{original_row['Type']}')")
+
+            if mismatch_count == 0:
+                print("ДИАГНОСТИКА ПРОЙДЕНА: Локальная синхронизация X и y в порядке.")
+            else:
+                print(f"ДИАГНОСТИКА ПРОВАЛЕНА: Найдено {mismatch_count} несоответствий.")
+            print("="*60 + "\n")
+
+        ########################################################################################
+
+
         print("Выборка сформирована")
-        return X_train_norm, y_train_with_aug, X_val_norm, y_val, X_test_norm, y_test
+        ### return X_train_norm, y_train_with_aug, X_val_norm, y_val, X_test_norm, y_test, metadata_train, metadata_val, metadata_test
+        return X_train_norm, y_train_with_aug, X_val_norm, y_val, X_test_norm, y_test, metadata_train, metadata_val, metadata_test, metadata_full_unshuffled
 
     def _is_label_valid_for_stage(self, row:Union[pd.Series, str]) -> Union[int, None]:
         """Формируем метку в зависимости от стадии"""
@@ -351,14 +470,14 @@ class DatasetPreparing:
         df_signals: pd.DataFrame,
         df_annotations: pd.DataFrame,
         channels: Union[str, Tuple[str]]
-        ) -> Tuple[np.ndarray, np.ndarray]:
+        ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Формирует окна вокруг R-пиков
         
         :param df_signals: pd.DataFrame с Sample и каналом target_channel
         :param df_annotations: pd.DataFrame с Sample и метками Type + Current_Rhythm
         :param target_channel: str — имя канала, например 'MLII'. Или 'Signal' для формата 'Total'
-        :return: numpy array (X), numpy array (y)
+        :return: numpy array (X), numpy array (y), numpy array (metadata)
         """
         if isinstance(channels, str):
             channels = [channels]
@@ -369,6 +488,7 @@ class DatasetPreparing:
         half_shift_size = shift_size // 2
         x_win = []
         y = []
+        metadata = []
         x_aug_win = defaultdict(lambda: defaultdict(list))
         y_aug = defaultdict(lambda: defaultdict(list))
         x_aug_total = []
@@ -452,6 +572,7 @@ class DatasetPreparing:
                     
                     y.append(label)
                     x_win.append(signal_values)
+                    metadata.append((pid, sample))
 
         # Обрабатываем собранные аугментации по каналам и меткам с выводом статистики
         x_aug_total, y_aug_total = self._process_augmentations(x_aug_win, y_aug, x_aug_total, y_aug_total)
@@ -464,7 +585,7 @@ class DatasetPreparing:
         if len(np.unique(y)) < 2:
             raise ValueError("Недостаточно уникальных меток для обучения модели.")
 
-        return np.array(x_win), np.array(y)
+        return np.array(x_win), np.array(y), np.array(metadata, dtype=object)
 
     def _shift_noise_augmentation(self, 
             canvas: np.ndarray,         ## полотно для нарезки на аугментированные окна шифтингом
@@ -565,7 +686,7 @@ class DatasetPreparing:
 
         return np.array(X_with_derivatives)
 
-    def _split_dataset(self, X:np.ndarray, y:np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def _split_dataset(self, X:np.ndarray, y:np.ndarray, metadata:np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Разделяет данные на train/val/test с сохранением баланса классов
         
@@ -573,14 +694,14 @@ class DatasetPreparing:
         :param y: numpy array
         :param test_size: float
         :param val_size: float
-        :return: X_train, y_train, X_val, y_val, X_test, y_test
+        :return: X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test
         """
         test_size=config['data']['test_size']
         val_size=config['data']['val_size']
 
         # Сначала выделим тест
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y,
+        X_train, X_test, y_train, y_test, metadata_train, metadata_test = train_test_split(
+            X, y, metadata,
             test_size=test_size,
             stratify=y,
             shuffle=True,
@@ -588,15 +709,15 @@ class DatasetPreparing:
         )
 
         # Теперь из train выделим val
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train, y_train,
+        X_train, X_val, y_train, y_val, metadata_train, metadata_val = train_test_split(
+            X_train, y_train, metadata_train,
             test_size=val_size / (1 - test_size),
             stratify=y_train,
             shuffle=True,
             random_state=42
         )
 
-        return X_train, y_train, X_val, y_val, X_test, y_test
+        return X_train, y_train, X_val, y_val, X_test, y_test, metadata_train, metadata_val, metadata_test
 
     def _x_train_augmentation(self, X_train: np.ndarray, y_train: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -857,7 +978,7 @@ class DatasetPreparing:
             filename = f'{save_path}/label_{int(lbl)}_for_{self.stage}.pkl'
             joblib.dump((x_lbl, y_lbl), filename)
 
-    def _save_dataset(self, X_train:np.ndarray, y_train:np.ndarray, X_val:np.ndarray, y_val:np.ndarray, X_test:np.ndarray, y_test:np.ndarray, prefix:str, stage:str) -> None:
+    def _save_dataset(self, X_train:np.ndarray, y_train:np.ndarray, X_val:np.ndarray, y_val:np.ndarray, X_test:np.ndarray, y_test:np.ndarray, metadata_train:np.ndarray, metadata_val:np.ndarray, metadata_test:np.ndarray, metadata_full_unshuffled: np.ndarray, prefix:str, stage:str) -> None:
         """
         Сохраняет датасет на диск с префиксами
         
@@ -867,6 +988,33 @@ class DatasetPreparing:
         dir_to_save = config['paths']['data_dir']
         os.makedirs(dir_to_save, exist_ok=True)
 
+        # Создание размеченного массива метаданных
+        # 1. Создаем быстрый индекс для каждого набора
+        train_set = {tuple(m) for m in metadata_train}
+        val_set = {tuple(m) for m in metadata_val}
+        test_set = {tuple(m) for m in metadata_test}
+       
+        # 2. Проходим по исходному, неперемешанному массиву и создаем новый с метками
+        metadata_labeled = []
+        for meta in metadata_full_unshuffled:
+            meta_tuple = tuple(meta)
+            if meta_tuple in train_set:
+                split_label = 'train'
+            elif meta_tuple in val_set:
+                split_label = 'val'
+            elif meta_tuple in test_set:
+                split_label = 'test'
+            else:
+                # Это может случиться, если train_test_split отбросил какие-то данные
+                # (маловероятно при stratify, но возможно)
+                split_label = 'unused'
+            
+            # Сохраняем кортеж: (patient_id, sample_id, split_label)
+            metadata_labeled.append((meta[0], meta[1], split_label))
+            
+        # 3. Конвертируем в numpy array
+        metadata_labeled = np.array(metadata_labeled, dtype=object)
+
         savefile = os.path.join(dir_to_save, f"{prefix}_{stage}_dataset.npz")
         np.savez(savefile,
             X_train=X_train,
@@ -874,5 +1022,169 @@ class DatasetPreparing:
             X_val=X_val,
             y_val=y_val,
             X_test=X_test,
-            y_test=y_test
+            y_test=y_test,
+            metadata_train=metadata_train,
+            metadata_val=metadata_val,
+            metadata_test=metadata_test,
+            metadata_labeled=metadata_labeled
         )
+
+    def is_label_valid_for_stage(self, row:Union[pd.Series, str]) -> Union[int, None]:
+        """Формируем метку в зависимости от стадии"""
+        
+        if isinstance(row, str):
+            for_check = row
+            for_check2 = row # для строки не подается 2й параметр
+        else:
+            for_check = row['Type']
+            for_check2 = row['Current_Rhythm']
+
+        if self.stage == 'stage1':
+            if for_check == 'N' and for_check2 == 'N':
+                return 0  # "Good" (53%)
+            else:
+                return 1  # "Alert" (47%)
+
+        elif self.stage == 'stage(не реализованная)':
+            if for_check == 'N' and for_check2 == 'N':
+                return None         # отсев на 1й стадии
+            elif for_check == 'N' and for_check2 != 'N':
+                return 0  # "Attention" (29%)
+            else:
+                return 1  # "Alarm" (71%)
+
+        elif self.stage == 'stage_all(не реализованная)':
+            self.num_classes = 11
+            if for_check == 'N':
+                return 0  # N: 68.98% == суперкласс Normal
+            elif for_check == 'L':
+                return 1  # L: 15.25%
+            elif for_check == 'R':
+                return 2  # R: 13.71%
+            elif for_check == 'A':
+                return 3  # A: 4.81%
+            elif for_check == 'a':
+                return 4  # a: 0.28%
+            elif for_check == 'J':
+                return 5  # J: 0.16%
+            elif for_check == 'e':
+                return 6  # e: 0.03%
+            elif for_check == 'j':
+                return 7  # j: 0.43%
+            elif for_check == 'V':
+                return 8  # V: 13.47%
+            elif for_check == 'E':
+                return 9  # E: 0.20%
+            elif for_check == 'F':
+                return 10  # F: 1.52%
+            elif for_check == '+':
+                return 11  # +: 2.44%
+            elif for_check in ['Q', '/', '!', '~', 'f', 'U', '?', '"', 'x', '[', ']']:
+                return 12  # шумы: 18.45% == суперкласс Q
+            else:
+                return None
+
+        elif self.stage == 'stage2a':
+            self.num_classes = 11
+            if for_check == 'N' and for_check2 == 'N':
+                return None         # отсев на 1й стадии
+            elif for_check == 'N' and for_check2 != 'N':
+                return 0  # N: 28.98% == суперкласс Normal
+
+            elif for_check == 'L':
+                return 1  # L: 15.25%
+            elif for_check == 'R':
+                return 2  # R: 13.71%
+            elif for_check == 'A':
+                return 3  # A: 4.81%
+            elif for_check == 'a':
+                return 4  # a: 0.28%
+            elif for_check == 'J':
+                return 5  # J: 0.16%
+            elif for_check == 'e':
+                return 6  # e: 0.03%
+            elif for_check == 'j':
+                return 7  # j: 0.43% == суперкласс SVEB
+
+            elif for_check in ['V', 'E']:
+                return 8  # V: 13.47%, E: 0.20% == суперкласс VEB: 13.67%
+
+            elif for_check in ['F', '+']:
+                return 9  # F: 1.52%, +: 2.44% == суперкласс Fusion: 3.96%
+
+            elif for_check in ['Q', '/', '!', '~', 'f', 'U', '?', '"', 'x', '[', ']']:
+                return 10  # шумы: 18.45% == суперкласс Q
+            else:
+                return None
+
+        elif self.stage == 'stage2':
+            self.num_classes = 7
+            if for_check == 'N' and for_check2 == 'N':
+                return None         # отсев на 1й стадии
+            elif for_check == 'N' and for_check2 != 'N':
+                return 0  # N: 28.98% == суперкласс Normal
+
+            elif for_check == 'L':
+                return 1  # L: 15.25% == LBBB
+            elif for_check == 'R':
+                return 2  # R: 13.71% == RBBB
+            elif for_check in ['A', 'a', 'J', 'e', 'j']:
+                return 3  # A: 4.81%, a: 0.28%, J: 0.16%, e: 0.03%, j 0.43% == суперкласс subSVEB
+
+            elif for_check in ['V', 'E']:
+                return 4  # V: 13.47%, E: 0.20% == суперкласс VEB: 13.67%
+
+            elif for_check in ['F', '+']:
+                return 5  # F: 1.52%, +: 2.44% == суперкласс Fusion: 3.96%
+
+            elif for_check in ['Q', '/', '!', '~', 'f', 'U', '?', '"', 'x', '[', ']']:
+                return 6  # шумы: 18.45% == суперкласс Q
+            else:
+                return None
+
+        elif self.stage == 'stage3':
+            self.num_classes = 5
+
+            if for_check in ['A']:
+                return 0  # A: 4.81%
+            elif for_check in ['a']:
+                return 1  # a: 0.28%
+            elif for_check in ['J']:
+                return 2  # J: 0.16%
+            elif for_check in ['e']:
+                return 3  # e: 0.03%
+            elif for_check in ['j']:
+                return 4  # j 0.43%
+            else:
+                return None
+
+        elif self.stage == 'stage01':
+            self.num_classes = 13
+            if for_check == 'N':
+                return 0  # N: 68.98% == суперкласс Normal
+            elif for_check == 'L':
+                return 1  # L: 15.25%
+            elif for_check == 'R':
+                return 2  # R: 13.71%
+            elif for_check == 'A':
+                return 3  # A: 4.81%
+            elif for_check == 'a':
+                return 4  # a: 0.28%
+            elif for_check == 'J':
+                return 5  # J: 0.16%
+            elif for_check == 'e':
+                return 6  # e: 0.03%
+            elif for_check == 'j':
+                return 7  # j: 0.43%
+            elif for_check == 'V':
+                return 8  # V: 13.47%
+            elif for_check == 'E':
+                return 9  # E: 0.20%
+            elif for_check == 'F':
+                return 10  # F: 1.52%
+            elif for_check == '+':
+                return 11  # +: 2.44%
+            elif for_check in ['Q', '/', '!', '~', 'f', 'U', '?', '"', 'x', '[', ']', '|']:
+                return 12  # шумы: 18.45% == суперкласс Q
+            else:
+                return None
