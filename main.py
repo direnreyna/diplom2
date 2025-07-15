@@ -55,7 +55,7 @@ with mlflow.start_run():
 inferencer = WindowInference(prefix=config['execution']['prefix'])
 inferencer.predict_random()
 
-
+"""
 # --- ДИАГНОСТИЧЕСКИЙ БЛОК (ВЕРСИЯ 2) --- ## ИЗМЕНЕНА ВСЯ СЕКЦИЯ
 print("\n" + "="*50)
 print("ЗАПУСК ГЛУБОКОЙ ДИАГНОСТИКИ СИНХРОНИЗАЦИИ ДАННЫХ STAGE2")
@@ -129,4 +129,4 @@ if os.path.exists(problem_dataset_path):
         print("Это доказывает, что проблема в рассинхронизации данных при их подготовке.")
 
 else:
-    print(f"Диагностика невозможна: файл {problem_dataset_path} не найден.")
+    print(f"Диагностика невозможна: файл {problem_dataset_path} не найден.")"""

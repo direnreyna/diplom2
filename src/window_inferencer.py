@@ -23,7 +23,7 @@ class WindowInference:
         print("Инициализация WindowInference...")
         self.prefix = prefix
         self.config = config
-
+        
         print("\n" + "="*50)
         print("ЗАПУСК ТЕСТИРОВАНИЯ НОВОГО КАСКАДНОГО ИНФЕРЕНСА")
         print("="*50)
@@ -153,6 +153,8 @@ class WindowInference:
             print(f"Истинная метка Stage 2: {results['true_label_s2']}")
             print(f"Предсказание Stage 2: {results['prediction_s2']} (Уверенность: {results['confidence_s2']:.2f}%)")
             title += f" -> S2: {results['prediction_s2']}"
+            common_result = results['confidence_s1'] * results['confidence_s2'] / 100
+            print(f"Уверенность по 2 стадиям: {common_result:.2f}%)")
         else:
             print("Инференс Stage 2 не проводился.")
 

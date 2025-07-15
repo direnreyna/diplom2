@@ -482,6 +482,25 @@ class ModelTraining:
         
         print(f"[{self.prefix}] Обучение модели завершено")
 
+        try:
+            # self.model на этом этапе УЖЕ содержит веса лучшей эпохи благодаря EarlyStopping(restore_best_weights=True)
+            model_name_for_mlflow = f"{self.prefix}_{self.stage}_model"
+
+            mlflow.keras.log_model(
+                self.model,
+                artifact_path="model",
+                registered_model_name=model_name_for_mlflow,
+                custom_objects={
+                    'SelfAttentionBlock': SelfAttentionBlock,
+                    'CategoricalFocalLoss': CategoricalFocalLoss,
+                    'MacroF1Score': MacroF1Score
+                }
+            )
+            print(f"Модель '{model_name_for_mlflow}' успешно зарегистрирована в MLflow Model Registry.")
+        except Exception as e:
+            print(f"ОШИБКА при регистрации модели в MLflow: {e}")
+
+
     def _plot_training_history(self):
         if self.history is None:
             raise ValueError("Нет данных об обучении. Обучите модель сначала.")

@@ -5,7 +5,7 @@ execution:
   load_from_mlflow: False ## True / False
   mlflow_run_id:
     stage1: "13658bc131184bea8610a3531ac34d9b"
-    stage2: "555ba08ffe0349d5908c6e7871aa0f3d"
+    stage2: "2d2b55f652dc4e858793d34ef338ddc1"
 
 paths:
   data_dir: "data"
@@ -19,11 +19,11 @@ paths:
   
 params:
   batch_size: 256
-  epochs: 50
+  epochs: 100
   patience_early_stop: 200
-  learning_rate: 0.001
+  learning_rate: 0.0001
   min_learning_rate: 0.000001
-  patience_reduce_lr: 25
+  patience_reduce_lr: 100
   factor_reduce_lr: 0.2
   #attention_type: "multi_head_attention"  
   attention_type: "self_attention"  
