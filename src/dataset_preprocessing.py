@@ -1,12 +1,13 @@
 # src/dataset_preprocessing
 
+import os
 import pandas as pd
-from config import config
+from .config import config 
 
-from dataset_loading import DatasetLoading
-from dataset_analyzer import DatasetAnalyze
-from dataset_filtering import DatasetFiltering
-from dataset_preparing import DatasetPreparing
+from .dataset_loading import DatasetLoading
+from .dataset_analyzer import DatasetAnalyze
+from .dataset_filtering import DatasetFiltering
+from .dataset_preparing import DatasetPreparing
 
 class DatasetPreprocessing():
     """Класс, управлящий подготовкой данных"""
@@ -86,3 +87,23 @@ class DatasetPreprocessing():
             self.load_dataset().filter_data().analyze_dataset().prepare_data()
         ## Временно для теста аналитики
         ### self.load_dataset().filter_data().analyze_dataset()
+
+    def ensure_patient_summary_exists(self):
+        """
+        Проверяет наличие JSON-файла со сводкой по пациентам.
+        Если файла нет, запускает минимальный пайплайн для его создания.
+        """
+        summary_path = os.path.join(config['paths']['data_dir'], "patient_detailed_summary.json")
+        if os.path.exists(summary_path):
+            print("Файл сводки по пациентам найден. Создание пропускается.")
+            return
+
+        print("Файл сводки по пациентам не найден. Запускаю генерацию...")
+        # 1. Загружаем сырые данные
+        self.load_dataset()
+        # 2. Добавляем информацию о ритме (нужна для анализа)
+        filterer = DatasetFiltering(self)
+        filterer._add_rhythm_annotations()
+        # 3. Создаем анализатор и вызываем ТОЛЬКО нужный метод
+        analyzer = DatasetAnalyze(self)
+        analyzer._generate_and_save_detailed_summary()

@@ -1,7 +1,7 @@
 execution:
   stage: 'stage2'
   prefix: 'top'
-  mode: 'full' ## 'full' для обучения / 'eval' для оценки
+  mode: 'eval' ## 'full' для обучения / 'eval' для оценки
   load_from_mlflow: False ## True / False
   mlflow_run_id:
     stage1: "13658bc131184bea8610a3531ac34d9b"
@@ -19,7 +19,7 @@ paths:
   
 params:
   batch_size: 256
-  epochs: 100
+  epochs: 2
   patience_early_stop: 200
   learning_rate: 0.0001
   min_learning_rate: 0.000001

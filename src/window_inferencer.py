@@ -1,6 +1,7 @@
 # src/window_inferencer
 
 import os
+import json
 import numpy as np
 import mlflow
 import tensorflow as tf
@@ -53,7 +54,11 @@ class WindowInference:
         # Загружаем метки классов
         self.class_labels_s1 = self.config['class_labels']['stage1']
         self.class_labels_s2 = self.config['class_labels']['stage2']
-        
+
+        # Загружаем детализированную сводку по пациентам для "умного" dropdown и статистики
+        self.patient_summary = self._load_patient_summary()
+        self.formatted_patient_list = self._create_formatted_patient_list()
+
         print("InferencePipeline готов к работе.")
 
     def _load_model_for_stage(self, stage: str) -> Model:
@@ -262,3 +267,76 @@ class WindowInference:
                 label_text = f"{s_id} [{split_label.upper()}]"
                 patient_peaks_text.append(label_text)
         return patient_peaks_text
+    
+    def _load_patient_summary(self) -> dict:
+        """Загружает JSON-файл с детализированной статистикой по пикам пациентов."""
+        summary_path = os.path.join(self.config['paths']['data_dir'], "patient_detailed_summary.json")
+        if not os.path.exists(summary_path):
+            print(f"КРИТИЧЕСКАЯ ОШИБКА: Файл сводки {summary_path} не найден. 'Умный' список пациентов будет недоступен.")
+            return {}
+        try:
+            with open(summary_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"ОШИБКА при загрузке или парсинге JSON-сводки: {e}")
+            return {}
+
+    def _create_formatted_patient_list(self) -> list:
+        """Создает список пациентов в формате 'ID 101 [subSVEB(24%), N(75%)]' для Dropdown."""
+        if not self.patient_summary:
+            return self.get_patient_list() # Возвращаем простой список, если сводка не загрузилась
+
+        formatted_list = []
+        # Сортируем по ID пациента (ключи словаря)
+        sorted_patient_ids = sorted(self.patient_summary.keys(), key=lambda x: int(x))
+
+        for pid in sorted_patient_ids:
+            data = self.patient_summary[pid]
+            distribution = data.get("distribution", {})
+            
+            # Сортируем классы по проценту (от большего к меньшему)
+            sorted_classes = sorted(distribution.items(), key=lambda item: item[1]['total_percent'], reverse=True)
+            
+            stats = []
+            for class_name, class_data in sorted_classes:
+                percent = class_data['total_percent']
+                if percent > 0.1: # Показываем только значимые классы
+                    stats.append(f"{class_name}({int(round(percent, 0))}%)")
+            
+            stats_str = ", ".join(stats)
+            formatted_list.append(f"ID {pid} [{stats_str}]")
+        
+        return formatted_list
+        
+    def get_patient_stats_markdown(self, formatted_patient_str: str) -> str:
+        """Возвращает markdown-отчет по выбранному пациенту для отображения в GUI."""
+        if not formatted_patient_str or not self.patient_summary:
+            return "Выберите пациента, чтобы увидеть подробную статистику."
+
+        try:
+            pid = formatted_patient_str.split(' ')[1]
+        except IndexError:
+            return "Ошибка: не удалось извлечь ID пациента."
+        
+        data = self.patient_summary.get(pid)
+        if not data:
+            return f"Статистика для пациента {pid} не найдена."
+
+        total_peaks = data['total_peaks']
+        distribution = data.get("distribution", {})
+        
+        report = [f"### Статистика по пациенту {pid}", f"**Всего R-пиков:** {total_peaks}\n"]
+
+        # Сортируем для красивого вывода
+        sorted_classes = sorted(distribution.items(), key=lambda item: item[1]['total_percent'], reverse=True)
+
+        for class_name, class_data in sorted_classes:
+            report.append(f"- **{class_name}:** {class_data['total_percent']}%")
+            details = class_data.get('details', {})
+            if len(details) > 1: # Показываем детали, только если в группе больше одного типа
+                detail_parts = []
+                for raw_type, percent in details.items():
+                    detail_parts.append(f"{raw_type} ({percent}%)")
+                report.append(f"  - `{' / '.join(detail_parts)}`")
+        
+        return "\n".join(report)

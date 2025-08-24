@@ -1,11 +1,13 @@
 # src/dataset_analyzer.py
 
 import os
+import json
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from collections import defaultdict
 
 from tqdm import tqdm
 from config import config
@@ -752,3 +754,83 @@ class DatasetAnalyze:
         
         #Датафрейм df2_all_annotations для анализа для 2й стадии
         self.df2_all_annotations = self.container.df_all_annotations[~mask_n_n]
+
+
+    def _generate_and_save_detailed_summary(self) -> None:
+        """
+        Создает и сохраняет детализированную сводку по R-пикам для каждого пациента в JSON-файл.
+        Сводка включает распределение по итоговым классам Stage 2 и детализацию по сырым типам.
+        """
+        print("Начинаю генерацию детализированной сводки по пациентам...")
+        
+        # Карта для группировки сырых типов в классы Stage 2
+        GROUP_MAP = {
+            'A': 'subSVEB', 'a': 'subSVEB', 'J': 'subSVEB', 'e': 'subSVEB', 'j': 'subSVEB',
+            'V': 'VEB', 'E': 'VEB',
+            'F': 'Fusion', '+': 'Fusion',
+            'Q': 'Q', '/': 'Q', '!': 'Q', '~': 'Q', 'f': 'Q', 'U': 'Q', '?': 'Q', '"': 'Q', 'x': 'Q', '[': 'Q', ']': 'Q',
+            'N': 'N (по Aux не N)', 
+            'L': 'L',
+            'R': 'R'
+        }
+
+        # Используем df_all_annotations, так как нужна полная картина
+        df_annos = self.container.df_all_annotations
+        all_patients_summary = {}
+
+        for pid in tqdm(df_annos['Patient_id'].unique(), desc="Анализ пациентов для сводки"):
+            df_patient = df_annos[df_annos['Patient_id'] == pid]
+            total_peaks = len(df_patient)
+            if total_peaks == 0:
+                continue
+
+            # Считаем сырые типы
+            raw_type_counts = df_patient['Type'].value_counts().to_dict()
+            
+            # Формируем итоговую структуру
+            patient_distribution = {}
+            
+            # Создаем временный словарь для подсчета групп
+            group_counts = defaultdict(int)
+            for raw_type, count in raw_type_counts.items():
+                group = GROUP_MAP.get(raw_type)
+                if group:
+                    # Особая логика для 'N': считаем только те, что НЕ 'N+N'
+                    if raw_type == 'N':
+                        # Считаем 'N' пики, где ритм НЕ 'N'
+                        n_not_n_rhythm_count = len(df_patient[(df_patient['Type'] == 'N') & (df_patient['Current_Rhythm'] != 'N')])
+                        if n_not_n_rhythm_count > 0:
+                           group_counts[group] += n_not_n_rhythm_count
+                    else:
+                        group_counts[group] += count
+            
+            # Собираем финальный JSON-объект
+            for group, group_total_count in group_counts.items():
+                patient_distribution[group] = {
+                    "total_percent": round((group_total_count / total_peaks) * 100, 2),
+                    "details": {}
+                }
+                # Находим все сырые типы для этой группы
+                for raw_type, mapped_group in GROUP_MAP.items():
+                    if mapped_group == group and raw_type in raw_type_counts:
+                        raw_count = raw_type_counts[raw_type]
+                        # Особая логика для 'N'
+                        if raw_type == 'N':
+                            raw_count = len(df_patient[(df_patient['Type'] == 'N') & (df_patient['Current_Rhythm'] != 'N')])
+
+                        if raw_count > 0:
+                            patient_distribution[group]['details'][raw_type] = round((raw_count / total_peaks) * 100, 2)
+
+            all_patients_summary[str(pid)] = {
+                "total_peaks": total_peaks,
+                "distribution": patient_distribution
+            }
+
+        # Сохраняем результат
+        summary_path = os.path.join(config['paths']['data_dir'], "patient_detailed_summary.json")
+        try:
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                json.dump(all_patients_summary, f, ensure_ascii=False, indent=4)
+            print(f"Детализированная сводка по пациентам успешно сохранена в: {summary_path}")
+        except Exception as e:
+            print(f"ОШИБКА при сохранении детализированной сводки: {e}")
