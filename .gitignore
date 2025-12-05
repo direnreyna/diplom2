@@ -1,7 +1,12 @@
 data/*
+data_p_net/*
 venv_diplom2/
 origins/
 temp/
 input/*
 mlruns/*
+mlruns_old/*
 src/__pycache__/
+model/
+
+wfdb

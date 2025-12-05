@@ -2,23 +2,33 @@
 
 import tensorflow as tf
 from tensorflow.keras import layers, Model, saving
+from typing import Optional
 
 @tf.keras.saving.register_keras_serializable()
 class SelfAttentionBlock(layers.Layer):
-    def __init__(self, use_projection=True, **kwargs):
+    """
+    Реализует слой self-attention с остаточным соединением и нормализацией.
+    Может использоваться как в трансформерных блоках, так и самостоятельно.
+    """
+    def __init__(self, use_projection: bool = True, **kwargs) -> None:
         """
-        Слой самовнимания для временных рядов и CNN/MLP/LSTM
-        :param use_projection: использовать Dense-проекции для Q/K/V
+        Инициализирует слой self-attention.
+
+        :param use_projection: Если True, для Q, K, V будут созданы отдельные Dense-слои. 
+                             Если False, Q, K, V будут равны входному тензору.
         """
         super(SelfAttentionBlock, self).__init__(**kwargs)
         self.use_projection = use_projection
-        self.feature_dim = None
-        self.scale = None
+        self.feature_dim: Optional[int] = None
+        self.scale: Optional[tf.Tensor] = None
         self.supports_masking = True  # Поддержка LSTM и GRU маскировки
 
-    def build(self, input_shape):
+    def build(self, input_shape: tuple) -> None:
         """
-        input_shape == (batch_size, timesteps, features)
+        Создает веса слоя (Dense-проекции, слои нормализации).
+        Вызывается автоматически при первом прогоне данных через слой.
+
+        :param input_shape: Кортеж с формой входного тензора (batch_size, timesteps, features).
         """
         feature_dim = input_shape[-1]
 
@@ -39,10 +49,12 @@ class SelfAttentionBlock(layers.Layer):
 
         super().build(input_shape)
 
-    def call(self, inputs):
+    def call(self, inputs: tf.Tensor) -> tf.Tensor:
         """
-        inputs: shape == (batch_size, timesteps, features)
-        returns: output tensor of the same shape
+        Выполняет прямой проход данных через слой self-attention.
+
+        :param inputs: Входной тензор формы (batch_size, timesteps, features).
+        :return: Выходной тензор той же формы, что и входной.
         """
         query = self.query_proj(inputs)
         key = self.key_proj(inputs)
@@ -58,7 +70,8 @@ class SelfAttentionBlock(layers.Layer):
 
         return output
 
-    def get_config(self):
+    def get_config(self) -> dict:
+        """Возвращает сериализуемую конфигурацию слоя для сохранения/загрузки модели."""
         config = super(SelfAttentionBlock, self).get_config()
         config.update({
             'use_projection': self.use_projection

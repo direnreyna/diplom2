@@ -3,12 +3,18 @@
 import os
 import pandas as pd
 
+from .config import config
 from tqdm import tqdm
-from config import config
 from typing import Tuple, List
 
 class DatasetLoading:
+    """
+    Отвечает за первоначальную загрузку и парсинг сырых данных из временной папки.
+    Читает .csv файлы с сигналами и .txt файлы с аннотациями для всех пациентов,
+    объединяя их в единые pandas DataFrame.
+    """
     def __init__(self) -> None:
+        """Инициализирует класс, устанавливая пути к данным из глобального конфига."""
         self.temp_dir = config['paths']['temp_dir']
         self.all_stages = config['stages']['all']
         
@@ -62,7 +68,7 @@ class DatasetLoading:
 
         return self.df_all_signals, self.df_all_annotations, self.patient_ids
     
-    def check_datasets_exists(self):
+    def check_datasets_exists(self) -> None:
         """
         Проверяет наличие сохраненных ранее датасетов на диске
 

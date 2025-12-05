@@ -6,12 +6,11 @@ import tensorflow as tf
 import seaborn as sns
 import matplotlib.pyplot as plt
 import mlflow
-# import mlflow.keras
-# import mlflow.tensorflow
+import mlflow.keras
 
-from self_attention_block import SelfAttentionBlock
+from .self_attention_block import SelfAttentionBlock
 from typing import Tuple, cast
-from config import config
+from .config import config
 
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras import layers, Model, losses, saving, Input
@@ -27,12 +26,13 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 class CategoricalFocalLoss(tf.keras.losses.Loss): 
     """Классовая реализация Focal Loss. Гарантирует корректную сериализацию."""    
 
-    def __init__(self, gamma=2.0, alpha=[1.0, 1.0, 1.0, 1.0], name="categorical_focal_loss", **kwargs): 
+    def __init__(self, gamma: float = 2.0, alpha: list = [1.0, 1.0, 1.0, 1.0], name: str = "categorical_focal_loss", **kwargs) -> None:
         super().__init__(name=name, **kwargs) 
         self.gamma = gamma 
         self.alpha = alpha 
 
-    def call(self, y_true, y_pred): 
+    def call(self, y_true, y_pred) -> tf.Tensor:
+        """Вычисляет значение функции потерь."""
         alpha_tensor = tf.constant(self.alpha, dtype=tf.float32) 
 
         y_pred = tf.clip_by_value(y_pred, 1e-7, 1 - 1e-7) 
@@ -41,7 +41,8 @@ class CategoricalFocalLoss(tf.keras.losses.Loss):
         fl = -weight * tf.pow(1.0 - pt, self.gamma) * tf.math.log(pt) 
         return fl 
 
-    def get_config(self): 
+    def get_config(self) -> dict: 
+        """Возвращает сериализуемую конфигурацию лосса.""" 
         # Этот метод позволяет Keras сохранять параметры loss'a 
         config = super().get_config() 
         config.update({ 
@@ -51,7 +52,15 @@ class CategoricalFocalLoss(tf.keras.losses.Loss):
         return config 
 
 @tf.keras.saving.register_keras_serializable()
-def f1_score(y_true, y_pred):
+def f1_score(y_true, y_pred) -> tf.Tensor:
+    """
+    Вычисляет F1-меру для бинарной или многоклассовой классификации.
+    Для многоклассовой задачи возвращает среднее значение F1-меры по всем классам (macro average).
+
+    :param y_true: Истинные метки (тензор).
+    :param y_pred: Предсказанные вероятности (тензор).
+    :return: Значение F1-меры (скалярный тензор).
+    """
     is_multiclass = y_true.shape[-1] is not None and y_true.shape[-1] > 1
 
     # Корректная логика для мультиклассовой классификации
@@ -96,7 +105,7 @@ class MacroF1Score(tf.keras.metrics.Metric):
     Keras Metric для вычисления Macro F1-Score.
     Накапливает Confusion Matrix за эпоху и вычисляет F1-меру один раз в конце.
     """
-    def __init__(self, num_classes, name='macro_f1_score', **kwargs):
+    def __init__(self, num_classes: int, name: str = 'macro_f1_score', **kwargs) -> None:
         super().__init__(name=name, **kwargs)
         self.num_classes = num_classes
         # Накапливаем компоненты Confusion Matrix
@@ -105,7 +114,8 @@ class MacroF1Score(tf.keras.metrics.Metric):
         self.fp = self.add_weight(name='fp', shape=(self.num_classes,), initializer='zeros')
         self.fn = self.add_weight(name='fn', shape=(self.num_classes,), initializer='zeros')
 
-    def update_state(self, y_true, y_pred, sample_weight=None):
+    def update_state(self, y_true, y_pred, sample_weight=None) -> None:
+        """Обновляет состояние метрики на основе одного батча данных."""
         # Преобразуем OHE в sparse labels
         y_true_labels = tf.argmax(y_true, axis=-1)
         y_pred_labels = tf.argmax(y_pred, axis=-1)
@@ -122,7 +132,8 @@ class MacroF1Score(tf.keras.metrics.Metric):
         self.fp.assign_add(tf.cast(fp_batch, dtype=tf.float32))
         self.fn.assign_add(tf.cast(fn_batch, dtype=tf.float32))
 
-    def result(self):
+    def result(self) -> tf.Tensor:
+        """Вычисляет и возвращает итоговое значение метрики."""
         # Вычисляем Precision и Recall. Используем tf.math.divide_no_nan для стабильности.
         precision = tf.math.divide_no_nan(self.tp, (self.tp + self.fp))
         recall = tf.math.divide_no_nan(self.tp, (self.tp + self.fn))
@@ -133,13 +144,14 @@ class MacroF1Score(tf.keras.metrics.Metric):
         # Возвращаем Macro F1 (среднее по всем классам)
         return tf.reduce_mean(f1_per_class)
 
-    def reset_states(self):
-        # Сбрасываем накопленные состояния в начале каждой эпохи
+    def reset_states(self) -> None:
+        """Сбрасывает состояние метрики (вызывается в начале каждой эпохи)."""
         K.set_value(self.tp, tf.zeros(shape=(self.num_classes,)))
         K.set_value(self.fp, tf.zeros(shape=(self.num_classes,)))
         K.set_value(self.fn, tf.zeros(shape=(self.num_classes,)))
 
-    def get_config(self):
+    def get_config(self) -> dict:
+        """Возвращает сериализуемую конфигурацию метрики."""
         config = super().get_config()
         config.update({
             'num_classes': self.num_classes,
@@ -147,7 +159,24 @@ class MacroF1Score(tf.keras.metrics.Metric):
         return config
 
 class ModelTraining:
-    def __init__(self, stage, prefix, load_from_mlflow=False, mlflow_run_id=None) -> None:
+    """
+    Управляет полным жизненным циклом модели для одной стадии проекта:
+    - Загрузка данных.
+    - Создание или загрузка архитектуры модели (с логикой дообучения).
+    - Обучение модели с использованием коллбэков.
+    - Оценка на валидационной и тестовой выборках.
+    - Сохранение лучших весов и полных моделей.
+    - Визуализация результатов и логирование в MLflow.
+    """
+    def __init__(self, stage: str, prefix: str, load_from_mlflow: bool = False, mlflow_run_id: str | None = None) -> None:
+        """
+        Инициализирует трейнер для конкретной стадии и префикса.
+
+        :param stage: Текущая стадия обучения ('stage1', 'stage2' и т.д.).
+        :param prefix: Префикс датасета ('top', 'cross' и т.д.).
+        :param load_from_mlflow: Флаг для загрузки модели из MLflow Registry.
+        :param mlflow_run_id: ID запуска MLflow для загрузки модели.
+        """
         self.stage = stage
         self.multi_stages = config['stages']['multi']
         self.prefix = prefix
@@ -183,30 +212,26 @@ class ModelTraining:
     
     def pipeline(self, mode: str = 'full') -> None:
         """
-        Полный пайплайн: подготовка модели → обучение → оценка → сохранение лучшей модели
+        Оркестрирует основной пайплайн работы с моделью: подготовка модели → обучение → оценка → сохранение лучшей модели.
 
-        :param управляет логикой пайплайна mode:
-            - 'full' (подготовка модели → обучение → оценка → сохранение лучшей модели)
-            - 'eval' (только инференс)
-        :param force_rebuild: True, если изменена архитектура и обучение нужно начать с нуля, игнорируя сохраненные веса.
+        :param mode: Режим работы. 
+                    'full' - запускает обучение и оценку.
+                    'eval' - запускает только оценку на существующей модели.
         """
-
         self._create_model()
         if mode == 'full':
             self._train_model()         ## Обучение / Дообучение модели
         self._evaluate_on_val()
         self.evaluate_model()
 
-    def _create_model(self):
+    def _create_model(self) -> None:
         """
-        Создает или загружает модель, реализуя логику дообучения:
-
-        Сценарий 0: ПРИОРИТЕТНАЯ ЗАГРУЗКА ИЗ MLFLOW - Если включен флаг load_from_mlflow
-        Сценарий 1: ДООБУЧЕНИЕ С ТЕМИ ЖЕ ПАРАМЕТРАМИ или ОЦЕНКА - Если существует файл лучшей модели
-        Сценарий 2: ПЕРВЫЙ ЗАПУСК или ИЗМЕНЕНИЕ АРХИТЕКТУРЫ - Если файла лучшей модели нет
-        Сценарий 3: Дообучение модели без ИЗМЕНЕНИЯ АРХИТЕКТУРЫ (изменение оптимизатора) - Загрузка весов сохраненной дообученной модели
+        Создает новую модель или загружает существующую, реализуя сложную логику:
+        - Сценарий 0 (Приоритет): Если `load_from_mlflow`=True, пытается загрузить модель из MLflow.
+        - Сценарий 1: Если на диске существует полный файл модели (.keras), загружает его вместе с состоянием оптимизатора.
+        - Сценарий 2: Если полная модель не найдена, строит новую архитектуру с нуля.
+        - Сценарий 3: Если после постройки новой архитектуры найден файл только с весами (.weights.h5), загружает эти веса в новую модель.
         """
-
         #################################################################################
         # Сценарий 0: Приоритетная загрузка из MLflow
         #################################################################################
@@ -245,17 +270,6 @@ class ModelTraining:
         if os.path.exists(self.best_model_file):
             print(f"Обнаружен файл полной модели. Загружаем из: {self.best_model_file}")
 
-            ### custom_objects_to_load = {
-            ###     'SelfAttentionBlock': SelfAttentionBlock,
-            ###     'CategoricalFocalLoss': CategoricalFocalLoss,
-            ###     'f1_score': f1_score
-            ### }
-            ### 
-            ### self.model = load_model( ## Изменена
-            ###     self.best_model_file, 
-            ###     custom_objects=custom_objects_to_load ## Изменена
-            ### )
-
             self.model = load_model(
                 self.best_model_file, 
                 # custom_objects={'SelfAttentionBlock': SelfAttentionBlock, 'f1_score': self.f1_score, 'loss':self._categorical_focal_loss}
@@ -292,7 +306,6 @@ class ModelTraining:
 
             last_layer = Dense(self.y_train.shape[1], activation='softmax')
             #stage_metrics=['accuracy', self.f1_score]
-            ### stage_metrics=['accuracy', f1_score]
             stage_metrics=['accuracy', MacroF1Score(num_classes=self.y_train.shape[1])]       ## Используем класс метрики вместо функции
 
             print(f">>> Число классов: {self.y_train.shape[1]}")
@@ -354,19 +367,47 @@ class ModelTraining:
 
         # Стартовая ветка для SELF-ATTENTION
         else:
+            """
+            # Блок: Сложная модель для stage2
             x = Conv1D(128, (3), activation='relu', kernel_regularizer=l2(0.0001))(input_layer_functional)
             x = SelfAttentionBlock(use_projection=True)(x)
             x = Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.0001))(x)
             x = SelfAttentionBlock(use_projection=True)(x)
+            """
+            x = Conv1D(64, (3), activation='relu', kernel_regularizer=l2(0.001))(input_layer_functional)
+            x = SelfAttentionBlock(use_projection=True)(x)
+            x = Conv1D(128, (3), activation='relu', kernel_regularizer=l2(0.001))(x)
+            x = SelfAttentionBlock(use_projection=True)(x)
+            x = Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.001))(x)
+            x = SelfAttentionBlock(use_projection=True)(x)
 
+            ### # Блок: Упрощение модели для stage1
+            ### x = Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.0001))(input_layer_functional)
+            ### x = SelfAttentionBlock(use_projection=True)(x)
+            
         # Общая часть модели для обеих веток
         ### x = LSTM(256, return_sequences=True, kernel_regularizer=l2(0.00001))(x)
         ### x = Dropout(0.2)(x)
 
+        """
+        # Блок: Сложная модель для stage2
         x = LSTM(256, return_sequences=True, kernel_regularizer=l2(0.00001))(x)
         x = Dropout(0.4)(x)
         x = LSTM(128, return_sequences=False, kernel_regularizer=l2(0.00001))(x)
         x = Dropout(0.4)(x)
+        """
+
+        x = LSTM(256, return_sequences=True, kernel_regularizer=l2(0.00001))(x)
+        x = Dropout(0.5)(x)
+        x = LSTM(128, return_sequences=True, kernel_regularizer=l2(0.00001))(x)
+        x = Dropout(0.5)(x)
+        x = LSTM(64, return_sequences=False, kernel_regularizer=l2(0.00001))(x)
+        x = Dropout(0.5)(x)
+
+        ### # Блок: Упрощение модели для stage1
+        ### x = LSTM(128, return_sequences=False, kernel_regularizer=l2(0.001))(x)
+        ### x = Dropout(0.5)(x)
+
         x = Dense(32, kernel_regularizer=l2(0.00001))(x)
         x = BatchNormalization()(x)
         x = Activation('relu')(x)
@@ -380,29 +421,7 @@ class ModelTraining:
             loss=stage_loss,
             metrics=stage_metrics
         )
-            
-        #################################################################################
-        ### Вариант Sequential для архива
-        ###    model = Sequential()
-        ###    model.add(InputLayer(input_shape=input_shape))
-        ###    model.add(Conv1D(128, (3), activation='relu', input_shape=input_shape, kernel_regularizer=l2(0.0001)))
-        ###    model.add(SelfAttentionBlock(use_projection=True))
-        ###    model.add(Conv1D(256, (3), activation='relu', kernel_regularizer=l2(0.0001)))
-        ###    model.add(SelfAttentionBlock(use_projection=True))
-        ###    model.add(LSTM(256, return_sequences=True, kernel_regularizer=l2(0.00001)))
-        ###    model.add(Dropout(0.4))
-        ###    model.add(LSTM(128, return_sequences=False, kernel_regularizer=l2(0.00001)))
-        ###    model.add(Dropout(0.4))
-        ###    model.add(Dense(32, kernel_regularizer=l2(0.00001)))
-        ###    model.add(BatchNormalization())
-        ###    model.add(Activation('relu'))
-        ###    model.add(last_layer)
-        ###
-        ###    model.compile(
-        ###        optimizer=Adam(learning_rate=config['params']['learning_rate']),
-        ###        loss=stage_loss,
-        ###        metrics=stage_metrics
-        ###    )
+
         model.summary()
         #################################################################################
 
@@ -419,9 +438,11 @@ class ModelTraining:
                 print(f"ПРЕДУПРЕЖДЕНИЕ: Не удалось загрузить веса. Ошибка: {e}. Обучение начнется с нуля.")
         self.model = model
 
-    def _train_model(self):
+    def _train_model(self) -> None:
         """
-        Обучает модель на тренировочных данных с валидацией
+        Запускает процесс обучения модели на тренировочных данных.
+        Использует коллбэки для сохранения лучших моделей, ранней остановки и снижения скорости обучения.
+        После обучения логирует и регистрирует финальную модель в MLflow.
         """
         if self.model is None:
             print("ОШИБКА: Модель не была создана или загружена. Прерывание обучения.")
@@ -500,8 +521,11 @@ class ModelTraining:
         except Exception as e:
             print(f"ОШИБКА при регистрации модели в MLflow: {e}")
 
-
-    def _plot_training_history(self):
+    def _plot_training_history(self) -> None:
+        """
+        Визуализирует историю обучения модели (accuracy, loss, f1-score).
+        Строит отдельные графики для метрик обучения и валидации по эпохам.
+        """
         if self.history is None:
             raise ValueError("Нет данных об обучении. Обучите модель сначала.")
 
@@ -563,7 +587,15 @@ class ModelTraining:
         plt.tight_layout()
         plt.show()
 
-    def plot_confusion_matrix(self, cm, class_names, title="Confusion Matrix", save_path=None):
+    def plot_confusion_matrix(self, cm: np.ndarray, class_names: list[str], title: str = "Confusion Matrix", save_path: str | None = None) -> None:
+        """
+        Строит и отображает матрицу ошибок (confusion matrix) с помощью Seaborn.
+
+        :param cm: Матрица ошибок, рассчитанная sklearn.metrics.confusion_matrix.
+        :param class_names: Список названий классов для осей.
+        :param title: Заголовок графика.
+        :param save_path: (Опционально) Путь для сохранения графика в файл.
+        """
         plt.figure(figsize=(10, 8))
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
         plt.title(title)
@@ -573,7 +605,7 @@ class ModelTraining:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.show()
 
-    def _evaluate_on_val(self):
+    def _evaluate_on_val(self) -> None:
         """
         Оценивает качество модели на валидационной выборке
         """
@@ -594,7 +626,7 @@ class ModelTraining:
 
         self._print_evaluation(y_true, y_pred_classes, dataset_name="валидационной")
         
-    def evaluate_model(self):
+    def evaluate_model(self) -> None:
         """
         Оценивает качество модели на тестовой выборке
         """
@@ -615,9 +647,14 @@ class ModelTraining:
 
         self._print_evaluation(y_true, y_pred_classes, dataset_name="тестовой")
 
-    def _print_evaluation(self, y_true, y_pred_classes, dataset_name=""):
+    def _print_evaluation(self, y_true: np.ndarray, y_pred_classes: np.ndarray, dataset_name: str = "") -> None:
         """
-        Выводит метрики качества: accuracy, precision, recall, f1-score
+        Вспомогательный метод для вывода метрик качества.
+        Рассчитывает classification report, confusion matrix, логирует метрики в MLflow и строит график матрицы ошибок.
+
+        :param y_true: Истинные метки.
+        :param y_pred_classes: Предсказанные метки.
+        :param dataset_name: Название набора данных для логирования (например, "валидационной" или "тестовой").
         """
         report_text = classification_report(
             y_true, 
@@ -651,7 +688,13 @@ class ModelTraining:
         print("Confusion matrix:\n", cm)
         self.plot_confusion_matrix(cm, class_names=class_names)
 
-    def evaluate_on_test(self):
+    def evaluate_on_test(self) -> dict:
+        """
+        Оценивает модель на тестовой выборке и возвращает результаты в виде словаря.
+        (Похож на evaluate_model, но с возвращаемым значением для возможного использования в других модулях).
+        
+        :return: Словарь, содержащий текстовый classification report и numpy-массив confusion matrix.
+        """
         if self.model is None:
             raise ValueError("Модель не создана. Сначала обучите модель.")
 

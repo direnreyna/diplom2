@@ -1,4 +1,4 @@
-# file_management.py
+# src/file_management.py
 
 import os
 import shutil
@@ -6,11 +6,17 @@ import zipfile
 import rarfile
 import tarfile
 import py7zr
-from typing import List, Tuple
-from config import config
-from tqdm import tqdm  # <-- добавляем прогресс-бар
+
+from .config import config
+from typing import List
+from tqdm import tqdm
 
 class FileManagement:
+    """
+    Отвечает за подготовку файловой структуры проекта.
+    Копирует исходные данные (.csv, .txt) из input_dir во временную папку temp_dir.
+    Также содержит логику для распаковки архивов (на данный момент не используется). 
+    """
     def __init__(self) -> None:
         self.input_dir = config['paths']['input_dir']
         self.temp_dir = config['paths']['temp_dir']
@@ -52,7 +58,7 @@ class FileManagement:
         self.list_files = self._copy_group_files_to_temp(all_files, 'csv')
         self.list_anno = self._copy_group_files_to_temp(all_annos, 'txt') 
 
-    def _extract_archives(self):
+    def _extract_archives(self) -> None:
         """
         Распаковывает в temp_dir все .zip .tar .gz .7z .rar -архивы из self.input_dir.
 

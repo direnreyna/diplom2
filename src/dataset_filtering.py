@@ -4,12 +4,27 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from collections import Counter
-from typing import Tuple
+from typing import Tuple, TYPE_CHECKING
+
+# Для обещания типизации, чтобы не создавать циклический вызов классов: DatasetPreprocessing <-> DatasetFiltering
+if TYPE_CHECKING:
+    from .dataset_preprocessing import DatasetPreprocessing
 
 class DatasetFiltering:
-    def __init__(self, data_container):
+    """
+    Отвечает за фильтрацию и предварительную обработку загруженных данных.
+    
+    Основные задачи:
+    - Определение доступных каналов для каждого пациента.
+    - Анализ популярности каналов и автоматический выбор двух основных для дальнейшей работы.
+    - Добавление информации о ритме (`Current_Rhythm`) к аннотациям.
+    - Фильтрация и создание нескольких наборов DataFrame'ов для разных сценариев обучения и тестирования.
+    """
+    def __init__(self, data_container: 'DatasetPreprocessing') -> None:
         """
         Инициализирует фильтр, получая доступ к контейнеру данных.
+
+        :param data_container: Экземпляр класса DatasetPreprocessing, содержащий все загруженные данные.
         """
         self.container = data_container
 
@@ -46,7 +61,6 @@ class DatasetFiltering:
         Вспомогательный метод. Нужен для анализа данных и принятия решения о выборе каналов,
         на основе которых будет формироваться однородные данные будущего ДС.
         """
-
         channel_counter = Counter()
         for data in self.container.channels_per_patient.values():
             channel_counter.update(data['channels'])
@@ -91,7 +105,6 @@ class DatasetFiltering:
         Добавляет колонку 'Current_Rhythm' в self.container.df_all_annotations.
         Значение распространяется до следующего изменения ритма.
         """
-
         # Извлекаем только строки с ритмическими аннотациями
         rhythm_mask = self.container.df_all_annotations['Aux'].notna() & self.container.df_all_annotations['Aux'].str.startswith('(')
         rhythm_df = self.container.df_all_annotations.loc[rhythm_mask, ['Sample', 'Patient_id', 'Aux']].copy()
@@ -130,7 +143,6 @@ class DatasetFiltering:
             self.container.df_full_signals
             self.container.df_full_annotation
         """
-
         # Фильтруем по первому каналу
         self.container.df_top_signals, self.container.df_top_annotations = self._filter_df(
             self.container.df_all_signals,
@@ -184,14 +196,14 @@ class DatasetFiltering:
         print(f"Оставлено записей после 2-ной фильтрации (по {self.container.target_channel_name_1} и {self.container.target_channel_name_2}): {len(self.container.df_united_signals_1)}")
         print(f"Оставлено аннотаций после 2-ной фильтрации (по {self.container.target_channel_name_1} и {self.container.target_channel_name_2}): {len(self.container.df_united_annotation_1)}")
 
-    def _filter_df(self, df_s, df_a, channel) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def _filter_df(self, df_s: pd.DataFrame, df_a: pd.DataFrame, channel: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Фильтрует сигналы и аннотации по наличию данных в указанном канале.
 
         :param df_s: исходный датафрейм сигналов (pd.DataFrame)
         :param df_a: исходный датафрейм аннотаций (pd.DataFrame)
         :param channel: название канала для фильтрации (например 'MLII', 'V1')
-        :return: df_filtered_s, df_filtered_a
+        :return: Кортеж из двух отфильтрованных DataFrame'ов (сигналы, аннотации).
         """
         # Проверяем, существует ли такой канал в сигналах
         if channel not in df_s.columns:

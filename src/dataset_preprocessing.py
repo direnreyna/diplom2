@@ -3,11 +3,18 @@
 import os
 import pandas as pd
 from .config import config 
-
 from .dataset_loading import DatasetLoading
 from .dataset_analyzer import DatasetAnalyze
 from .dataset_filtering import DatasetFiltering
 from .dataset_preparing import DatasetPreparing
+from typing import TYPE_CHECKING
+
+# Для обещания типизации, чтобы не создавать циклический вызов классов:
+# DatasetPreprocessing <-> DatasetFiltering
+# DatasetPreprocessing <-> DatasetAnalyze
+if TYPE_CHECKING:
+    from .dataset_filtering import DatasetFiltering
+    from .dataset_analyzer import DatasetAnalyze
 
 class DatasetPreprocessing():
     """Класс, управлящий подготовкой данных"""
@@ -50,15 +57,15 @@ class DatasetPreprocessing():
         self.df_all_signals, self.df_all_annotations, self.patient_ids = loader.pipeline()
         return self
     
-    def filter_data(self):
+    def filter_data(self) -> 'DatasetPreprocessing':
         """Запускает фильтрацию данных по каналам."""
-        filterer = DatasetFiltering(self)
+        filterer: 'DatasetFiltering' = DatasetFiltering(self)
         filterer.run()
         return self
     
-    def analyze_dataset(self):
+    def analyze_dataset(self) -> 'DatasetPreprocessing':
         """Запускает исследовательский анализ данных (EDA)."""
-        analyzer = DatasetAnalyze(self)
+        analyzer: 'DatasetAnalyze' = DatasetAnalyze(self)
         analyzer.run()
         return self
 
@@ -84,8 +91,9 @@ class DatasetPreprocessing():
         """Полный пайплайн от загрузки до подготовки (X, y)"""
         loader = DatasetLoading()
         if not loader.check_datasets_exists():
-            self.load_dataset().filter_data().analyze_dataset().prepare_data()
-        ## Временно для теста аналитики
+           self.load_dataset().filter_data().analyze_dataset().prepare_data()
+        
+        ### # Временно для теста аналитики
         ### self.load_dataset().filter_data().analyze_dataset()
 
     def ensure_patient_summary_exists(self):

@@ -8,12 +8,31 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from collections import defaultdict
+from tabulate import tabulate
 
 from tqdm import tqdm
-from config import config
+from .config import config
+from typing import TYPE_CHECKING
+
+# Для обещания типизации, чтобы не создавать циклический вызов классов: DatasetPreprocessing <-> DatasetAnalyze
+if TYPE_CHECKING:
+    from .dataset_preprocessing import DatasetPreprocessing
 
 class DatasetAnalyze:
-    def __init__(self, data_container):
+    """
+    Отвечает за исследовательский анализ данных (EDA) и генерацию визуализаций.
+    
+    Принимает контейнер с данными от DatasetPreprocessing и выполняет следующие задачи:
+    - Анализирует и визуализирует распределение ЭКГ-каналов по пациентам.
+    - Анализирует и визуализирует распределение типов ритмов и R-пиков.
+    - Генерирует и сохраняет детализированную сводку по пациентам в JSON для GUI.
+    """
+    def __init__(self, data_container: 'DatasetPreprocessing') -> None:
+        """
+        Инициализирует анализатор.
+        
+        :param data_container: Экземпляр класса DatasetPreprocessing, содержащий все загруженные данные.
+        """
         self.container = data_container                         # self от внешнего класса DatasetPreprocessing
         self.temp_dir = config['paths']['temp_dir']
         self.check_analytics = config['data']['analytics']
@@ -46,9 +65,9 @@ class DatasetAnalyze:
             self._analyze_Current_Rhythm_statistics(self.container.df_all_annotations)    # Формирует общую статистику по Aux-событиям
             self._analyze_patient_rhythm_type_stats()                           # Формирует статистику Aux-событий по каждоиу пациенту
             self._binary_rhythm_type_analysis()                                 # Анализирует баланс нормальных R-пиков в нормальных Aux-событиях
-            self._visualize_global_rhythm_distribution()                        # 
-            self._visualize_rhythm_abnormal_distribution()                      # 
-            self._visualize_binary_rhythm_analysis()                            # Визуализирует баланс нормальных R-пиков в нормальных Aux-событиях
+            self._visualize_global_rhythm_distribution()                        # График: распределение ритмов (barplot)
+            self._visualize_rhythm_abnormal_distribution()                      # График: доля аномальных пиков внутри ритмов
+            self._visualize_binary_rhythm_analysis()                            # Pie chart: баланс "чистой нормы" к остальным
 
             # Анализ R-пиков и типов событий
             self._analyze_r_peak_statistics()                                   # Формирует статистику по R-пикам и типам событий 
@@ -59,17 +78,25 @@ class DatasetAnalyze:
             self._visualize_patient_peak_types_bars(mode='reduced')             # Color-bars: аггрегированные топ-типы пиков у каждого пациента
             self._visualize_top_anomalies_pie()                                 # Pie chart: самые частые аномалии по пациентам
         
+        self._analyze_class_distribution_by_patient()                           # Определение данных для стратификации редких R-пиков по пациентам между выборками T/V/T.
+        ### self.analyze_split_balance()                                            # Исследование распределения классов после ручной стратификации
+        ### self.create_patient_profiles_table()                                    
+
         # 2я стадия выделение датафреймов без N+N R-пиков
         self._create_dataframes_for_stage_2()                                   # создает self.df2_all_signals и self.df2_all_annotations
 
         if self.check_analytics:
-            # Анализ R-пиков и типов событий
-            self._analyze_Current_Rhythm_statistics(self.df2_all_annotations)   # Формирует общую статистику по Aux-событиям
-            self._binary_rhythm_type_analysis_for_stage2(self.df2_all_annotations)  # Анализирует баланс нормальных R-пиков вне нормальных Aux-событиий (стадия 2)
-            self._visualize_global_rhythm_distribution(stage='stage_2_')        # 
-            self._visualize_binary_rhythm_analysis_for_stage2()                 # 
-            self._analyze_peak_statistics_for_stage2()                          # Формирует общую статистику распределению R-пиков на 2й стадии (без N+N)
-            self._visualize_all_peak_types_for_stage2()                         # Визуализирует общую статистику распределению R-пиков на 2й стадии (без N+N)
+            # Проверяем, что датафрейм для stage 2 был успешно создан
+            if self.df2_all_annotations is not None:
+                # Анализ R-пиков и типов событий
+                self._analyze_Current_Rhythm_statistics(self.df2_all_annotations)   # Формирует общую статистику по Aux-событиям
+                self._binary_rhythm_type_analysis_for_stage2(self.df2_all_annotations)  # Анализирует баланс нормальных R-пиков вне нормальных Aux-событиий (стадия 2)
+                self._visualize_global_rhythm_distribution(stage='stage_2_')        # График: распределение ритмов (barplot)
+                self._visualize_binary_rhythm_analysis_for_stage2()                 # Pie chart: баланс оставшихся N к не-N
+                self._analyze_peak_statistics_for_stage2()                          # Формирует общую статистику распределению R-пиков на 2й стадии (без N+N)
+                self._visualize_all_peak_types_for_stage2()                         # Визуализирует общую статистику распределению R-пиков на 2й стадии (без N+N)
+            else:
+                print("ПРЕДУПРЕЖДЕНИЕ: DataFrame df2_all_annotations не был создан, анализ для Stage 2 пропускается.")
 
     def _visualize_channels_per_patient_table(self) -> None:
         """
@@ -87,7 +114,7 @@ class DatasetAnalyze:
         print("\n=== Таблица каналов по пациентам ===")
         print(df_summary.to_string(index=False))
 
-    def _visualize_channel_distribution(self):
+    def _visualize_channel_distribution(self) -> None:
         """
         График: сколько пациентов имеют каждый из каналов
         """
@@ -130,7 +157,7 @@ class DatasetAnalyze:
         plt.savefig(os.path.join(self.temp_dir, "patient_channel_matrix.png"))
         plt.show()
 
-    def _analyze_Current_Rhythm_statistics(self, df_all_annotations) -> None:
+    def _analyze_Current_Rhythm_statistics(self, df_all_annotations: pd.DataFrame) -> None:
         """
         Анализирует распределение событий в поле 'Current_Rhythm'
         Формирует статистику: частота встречаемости Current_Rhythm-меток
@@ -250,15 +277,14 @@ class DatasetAnalyze:
         print("...")
         print(self.container.df_all_annotations.loc[~mask_normal].head()[['Patient_id', 'Sample', 'Type', 'Current_Rhythm']])
 
-    def _binary_rhythm_type_analysis_for_stage2(self, df_all_annotations) -> None:
+    def _binary_rhythm_type_analysis_for_stage2(self, df_all_annotations: pd.DataFrame) -> None:
         """
-        Проводит бинарный анализ для 2й стадии:
-            - Категория 0: Type == 'N' → "почти чистая норма"
-            - Категория 1: все остальные случаи → "аномалия"
-        
-        Выводит статистику по всему датасету.
-        """
+        Проводит бинарный анализ для данных стадии 2.
+        Разделяет пики на три категории: 'N+N' (отфильтрованные), 'N' в аномальном ритме и 'не-N' пики.
+        Выводит статистику по этим категориям.
 
+        :param df_all_annotations: DataFrame с аннотациями для анализа (обычно self.df2_all_annotations).
+        """
         if 'Current_Rhythm' not in df_all_annotations.columns:
             print("Колонка 'Current_Rhythm' отсутствует — невозможно провести бинарный анализ")
             return
@@ -291,7 +317,7 @@ class DatasetAnalyze:
         print("...")
         print(df_all_annotations.loc[mask_not_normal].head()[['Patient_id', 'Sample', 'Type', 'Current_Rhythm']])
 
-    def _visualize_global_rhythm_distribution(self, stage='') -> None:
+    def _visualize_global_rhythm_distribution(self, stage: str = '') -> None:
         """
         График: общее распределение ритмов из Current_Rhythm (в процентах)
         """
@@ -334,6 +360,10 @@ class DatasetAnalyze:
         """
         Pie chart: соотношение 'чистых N в N' к 'всему остальному'
         """
+        # --- ОТЛАДОЧНЫЙ БЛОК
+        print("\n--- DEBUG: _visualize_binary_rhythm_analysis ---")
+        print(f"Размер df_all_annotations: {self.container.df_all_annotations.shape}")
+        print(f"Количество уникальных пациентов: {self.container.df_all_annotations['Patient_id'].nunique()}")
 
         normal_count = len(self.container.df_all_annotations[
             (self.container.df_all_annotations['Type'] == 'N') &
@@ -341,6 +371,14 @@ class DatasetAnalyze:
         ])
 
         abnormal_count = len(self.container.df_all_annotations) - normal_count
+
+        total_for_pie = normal_count + abnormal_count
+        percent_normal = (normal_count / total_for_pie) * 100 if total_for_pie > 0 else 0
+        percent_abnormal = (abnormal_count / total_for_pie) * 100 if total_for_pie > 0 else 0
+
+        print(f"Количество 'Чистая норма (N+N)': {normal_count} ({percent_normal:.2f}%)")
+        print(f"Количество 'Всё остальное': {abnormal_count} ({percent_abnormal:.2f}%)")
+        print("--- END DEBUG ---\n")
 
         labels = ['Чистая норма (N+N)', 'Всё остальное']
         sizes = [normal_count, abnormal_count]
@@ -575,9 +613,11 @@ class DatasetAnalyze:
     def _get_color_for_peak_type(self, peak_type: str, mode: str = 'full') -> str:
         """
         Возвращает цвет для типа события.
-        Если mode='reduced' → возвращает цвет по группе: Normal / Abnormal / BBB / Noise
+        
+        :param peak_type: Строковое обозначение типа пика (напр., 'N', 'V') или группы ('Normal').
+        :param mode: 'full' для цветов по типам, 'reduced' для цветов по группам.
+        :return: Строка с HEX-кодом цвета.
         """
-
         full_color_map = {
             'N': '#4CAF50',     # зелёный
             'V': '#F44336',     # красный
@@ -590,15 +630,15 @@ class DatasetAnalyze:
             'L': '#03A9F4',     # голубой
             'R': '#00BCD4',     # циан
             '+': '#FF5722',     # deep orange
-            '~': '#795548',     # brown
-            '[': '#795548',     # brown
-            '!': '#795548',     # brown
-            ']': '#795548',
-            '"': '#795548',
-            '?': '#795548',
-            'x': '#795548',
-            'f': '#795548',
-            'other': '#EEEEEE'
+            '~': '#795548',     # коричневый
+            '[': '#795548',     # коричневый
+            '!': '#795548',     # коричневый
+            ']': '#795548',     # коричневый
+            '"': '#795548',     # коричневый
+            '?': '#795548',     # коричневый
+            'x': '#795548',     # коричневый
+            'f': '#795548',     # коричневый
+            'other': '#EEEEEE'  # светлый
         }
 
         reduced_color_map = {
@@ -624,7 +664,6 @@ class DatasetAnalyze:
             'full' → все типы событий (исходные)
             'reduced' → три категории: N, Abnormal, Noise
         """
-
         plt.figure(figsize=(14, len(self.df_patient_peak_top_types) * 0.5))  # адаптируем высоту под число пациентов
 
         # --- Сортируем пациентов ---
@@ -755,7 +794,6 @@ class DatasetAnalyze:
         #Датафрейм df2_all_annotations для анализа для 2й стадии
         self.df2_all_annotations = self.container.df_all_annotations[~mask_n_n]
 
-
     def _generate_and_save_detailed_summary(self) -> None:
         """
         Создает и сохраняет детализированную сводку по R-пикам для каждого пациента в JSON-файл.
@@ -787,9 +825,19 @@ class DatasetAnalyze:
             # Считаем сырые типы
             raw_type_counts = df_patient['Type'].value_counts().to_dict()
             
+            # Считаем N+N отдельно
+            n_plus_n_count = len(df_patient[(df_patient['Type'] == 'N') & (df_patient['Current_Rhythm'] == 'N')])
+            
             # Формируем итоговую структуру
             patient_distribution = {}
             
+            # Добавляем N+N в распределение, если они есть
+            if n_plus_n_count > 0:
+                patient_distribution['N+N'] = {
+                    "total_percent": round((n_plus_n_count / total_peaks) * 100, 2),
+                    "details": {"N": round((n_plus_n_count / total_peaks) * 100, 2)}
+                }
+
             # Создаем временный словарь для подсчета групп
             group_counts = defaultdict(int)
             for raw_type, count in raw_type_counts.items():
@@ -834,3 +882,322 @@ class DatasetAnalyze:
             print(f"Детализированная сводка по пациентам успешно сохранена в: {summary_path}")
         except Exception as e:
             print(f"ОШИБКА при сохранении детализированной сводки: {e}")
+
+    def _analyze_class_distribution_by_patient(self) -> None:
+            """
+            Анализирует и выводит распределение итоговых классов Stage 2 по пациентам.
+            Отчет имеет вид: Класс -> Пациент -> Количество пиков.
+            Эта информация используется для принятия решения о стратифицированном разделении выборки.
+            """
+            print("\n" + "="*20 + " Анализ распределения классов по пациентам " + "="*20)
+            
+            df_annos = self.container.df_all_annotations.copy()
+
+            # Карта для группировки сырых типов
+            GROUP_MAP = {
+                'A': 'subSVEB', 'a': 'subSVEB', 'J': 'subSVEB', 'e': 'subSVEB', 'j': 'subSVEB',
+                'V': 'VEB', 'E': 'VEB',
+                'F': 'Fusion', '+': 'Fusion',
+                'Q': 'Q', '/': 'Q', '!': 'Q', '~': 'Q', 'f': 'Q', 'U': 'Q', '?': 'Q', '"': 'Q', 'x': 'Q', '[': 'Q', ']': 'Q',
+                'N': 'N (по Aux не N)', 
+                'L': 'L',
+                'R': 'R'
+            }
+            
+            # Создаем временную колонку с итоговым классом
+            def get_final_class(row):
+                if row['Type'] == 'N' and row['Current_Rhythm'] == 'N':
+                    return 'N+N'
+                return GROUP_MAP.get(row['Type'], 'Unknown')
+
+            df_annos['Final_Class'] = df_annos.apply(get_final_class, axis=1)
+
+            # Группируем и считаем
+            class_patient_counts = df_annos.groupby('Final_Class')['Patient_id'].value_counts()
+
+            # Выводим отчет
+            for final_class in sorted(class_patient_counts.index.get_level_values(0).unique()):
+                print(f"\n--- Класс: {final_class} ---")
+                
+                # Фильтруем данные для текущего класса и сортируем по убыванию количества
+                class_data = class_patient_counts[final_class].sort_values(ascending=False)
+                
+                # Преобразуем в более читаемый формат для вывода
+                output_lines = []
+                for patient_id, count in class_data.items():
+                    output_lines.append(f"  - Пациент {patient_id}: {count} пиков")
+                
+                print("\n".join(output_lines))
+            
+            print("="*70)
+
+
+    def analyze_split_balance(self) -> None:
+        """
+        Анализирует и выводит баланс классов для предопределенных train/val/test выборок.
+        Использует списки пациентов из config.yaml и DataFrame с профилями,
+        который генерируется на лету.
+        """
+        print("\n" + "="*25 + " Анализ баланса классов в выборках " + "="*25)
+
+        # 1. Загружаем списки пациентов из конфига
+        test_pids_config = config['data']['patient_split']['test_pids']
+        val_pids_config = config['data']['patient_split']['val_pids']
+
+        # 2. Подготавливаем DataFrame с профилями (аналогично create_patient_profiles_table)
+        df_annos = self.container.df_all_annotations.copy()
+        unmapped_types = set() # Сюда будем собирать все неопознанные символы
+
+        GROUP_MAP = {
+            # subSVEB
+            'A': 'subSVEB', 'a': 'subSVEB', 'J': 'subSVEB', 'e': 'subSVEB', 'j': 'subSVEB', 'S': 'subSVEB',
+            # VEB
+            'V': 'VEB', 'E': 'VEB',
+            # Fusion
+            'F': 'Fusion', '+': 'Fusion',
+            # Q (включая все шумы и неопределенные)
+            'Q': 'Q', '/': 'Q', '!': 'Q', '~': 'Q', 'f': 'Q', 'U': 'Q', '?': 'Q', '"': 'Q', 'x': 'Q', '[': 'Q', ']': 'Q', '|': 'Q',
+            # N-
+            'N': 'N-',
+            # BBB
+            'L': 'L',
+            'R': 'R'
+        }
+
+        def get_final_class(row):
+            peak_type = row['Type']
+            
+            if peak_type == 'N' and row['Current_Rhythm'] == 'N':
+                return 'N+'
+            
+            final_class = GROUP_MAP.get(peak_type)
+            if final_class is None:
+                unmapped_types.add(peak_type) # Нашли неопознанный тип - добавляем в set
+                return 'Unknown'
+            return final_class
+
+
+###        def get_final_class(row):
+###            if row['Type'] == 'N' and row['Current_Rhythm'] == 'N': return 'N+'
+###            # Для редких/неизвестных типов, не попавших в карту
+###            if row['Type'] not in GROUP_MAP: return 'Unknown'
+###            return GROUP_MAP.get(row['Type'])
+
+        df_annos['Final_Class'] = df_annos.apply(get_final_class, axis=1)
+
+        # 3. ДИАГНОСТИЧЕСКИЙ ВЫВОД: показываем, что попало в 'Unknown'
+        if unmapped_types:
+            print("\n" + "!"*20 + " ДИАГНОСТИКА 'UNKNOWN' " + "!"*20)
+            print(f"Следующие типы R-пиков не найдены в GROUP_MAP и были отнесены к классу 'Unknown':")
+            print(f" -> {sorted(list(unmapped_types))}")
+            print("!"*65)
+
+        # Создаем сводную таблицу (pivot table)
+        df_profiles = pd.pivot_table(
+            df_annos,
+            values='Sample',
+            index='Patient_id',
+            columns='Final_Class',
+            aggfunc='count',
+            fill_value=0
+        )
+        
+        # Добавляем итоговые столбцы
+        all_stage2_classes = [cls for cls in df_profiles.columns if cls != 'N+']
+
+        df_profiles['Total_Stage2'] = df_profiles[all_stage2_classes].sum(axis=1)
+        #df_profiles['Total_Peaks'] = df_profiles.sum(axis=1)
+
+        # Теперь Total_Peaks - это просто N+ и Total_Stage2. Больше нет двойного счета.
+        df_profiles['Total_Peaks'] = df_profiles.get('N+', 0) + df_profiles['Total_Stage2']
+
+
+        # 3. Определяем все группы пациентов
+        all_pids_in_data = set(df_profiles.index.astype(str))
+        test_pids_set = set(map(str, test_pids_config))
+        val_pids_set = set(map(str, val_pids_config))
+        
+        # Пациенты для train - это все, кто не в test и не в val
+        train_pids_set = all_pids_in_data - test_pids_set - val_pids_set
+
+        splits = {
+            'Train': sorted(list(train_pids_set)),
+            'Validation': sorted(list(val_pids_set)),
+            'Test': sorted(list(test_pids_set))
+        }
+
+        # 4. Собираем статистику
+        results = {}
+        all_classes_sorted = ['N+'] + sorted([col for col in df_profiles.columns if col not in ['Total_Peaks', 'Total_Stage2', 'N+']])
+
+        for split_name, pids in splits.items():
+            # Проверяем, есть ли пациенты из списка в данных
+            existing_pids = [pid for pid in pids if pid in df_profiles.index]
+            if not existing_pids:
+                df_split = pd.DataFrame(columns=df_profiles.columns).fillna(0)
+            else:
+                df_split = df_profiles.loc[existing_pids]
+            
+            counts = df_split.sum()
+            total_peaks = counts.get('Total_Peaks', 0)
+            total_stage2 = counts.get('Total_Stage2', 0)
+            
+            results[split_name] = {
+                'counts': counts,
+                'total_peaks': total_peaks,
+                'total_stage2': total_stage2,
+                'num_patients': len(existing_pids)
+            }
+
+        # 5. Формируем таблицу "Полное распределение"
+        table1_data = []
+        headers1 = [
+            "Класс", 
+            f"Train ({results['Train']['num_patients']} пац.)", 
+            f"Val ({results['Validation']['num_patients']} пац.)", 
+            f"Test ({results['Test']['num_patients']} пац.)"
+        ]
+        
+        for class_name in all_classes_sorted:
+            row = [class_name]
+            for split_name in ['Train', 'Validation', 'Test']:
+                count = results[split_name]['counts'].get(class_name, 0)
+                
+                # Всегда считаем процент от общего числа пиков
+                total_peaks = results[split_name]['total_peaks']
+
+                percent = (count / total_peaks * 100) if total_peaks > 0 else 0
+                row.append(f"{int(count)} ({percent:.1f}%)")
+            table1_data.append(row)
+
+        print("\n" + "="*30 + " Полное распределение классов по выборкам " + "="*30)
+        print(tabulate(table1_data, headers=headers1, tablefmt="grid"))
+
+        # 6. Формируем таблицу "Баланс для Stage 1"
+        table2_data = []
+        headers2 = ["Выборка", "N+ (Норма)", "Остальные (Аномалии)", "Всего пиков", "% N+ из всех"]
+
+        for split_name in ['Train', 'Validation', 'Test']:
+            n_plus_count = results[split_name]['counts'].get('N+', 0)
+            others_count = results[split_name]['total_peaks'] - n_plus_count
+            total_count = results[split_name]['total_peaks']
+
+            percent_normal = (n_plus_count / total_count * 100) if total_count > 0 else 0
+            row = [
+                split_name,
+                f"{int(n_plus_count)}",
+                f"{int(others_count)}",
+                f"{int(total_count)}",
+                f"{percent_normal:.1f}%"
+            ]
+            table2_data.append(row)
+            
+        print("\n" + "="*30 + " Баланс классов для Stage 1 " + "="*30)
+        print(tabulate(table2_data, headers=headers2, tablefmt="grid"))
+        print("="*85)
+
+    def create_patient_profiles_table(self) -> None:
+        """
+        Создает, выводит в консоль и сохраняет в CSV сводную таблицу-профиль по каждому пациенту.
+        Таблица содержит количество пиков каждого итогового класса и используется для
+        принятия решения о стратифицированном разделении.
+
+        В консольном выводе "занятые" пациенты из config['data']['patient_busy']
+        отображаются отдельно от "свободных".
+        """
+        print("\n" + "="*20 + " Генерация профилей пациентов для стратификации " + "="*20)
+        
+        df_annos = self.container.df_all_annotations.copy()
+
+        # Карта для группировки сырых типов
+        GROUP_MAP = {
+            'A': 'subSVEB', 'a': 'subSVEB', 'J': 'subSVEB', 'e': 'subSVEB', 'j': 'subSVEB',
+            'V': 'VEB', 'E': 'VEB', 'F': 'Fusion', '+': 'Fusion',
+            'Q': 'Q', '/': 'Q', '!': 'Q', '~': 'Q', 'f': 'Q', 'U': 'Q', '?': 'Q', '"': 'Q', 'x': 'Q', '[': 'Q', ']': 'Q',
+            'N': 'N-', 'L': 'L', 'R': 'R'
+        }
+        
+        def get_final_class(row):
+            if row['Type'] == 'N' and row['Current_Rhythm'] == 'N': return 'N+'
+            return GROUP_MAP.get(row['Type'], 'Unknown')
+
+        df_annos['Final_Class'] = df_annos.apply(get_final_class, axis=1)
+
+        # Создаем сводную таблицу (pivot table)
+        profiles_df = pd.pivot_table(
+            df_annos, 
+            values='Sample', 
+            index='Patient_id', 
+            columns='Final_Class', 
+            aggfunc='count', 
+            fill_value=0
+        )
+
+        # Добавляем итоговые столбцы
+        all_stage2_classes = [cls for cls in profiles_df.columns if cls != 'N+']
+        ### profiles_df['Total_Stage2'] = profiles_df[all_stage2_classes].sum(axis=1)
+        ### profiles_df['Total_Peaks'] = profiles_df.sum(axis=1)
+        if 'Total_Stage2' not in profiles_df.columns:
+            profiles_df['Total_Stage2'] = profiles_df[all_stage2_classes].sum(axis=1)
+        if 'Total_Peaks' not in profiles_df.columns:
+            profiles_df['Total_Peaks'] = profiles_df.sum(axis=1) - profiles_df['Total_Stage2'] # Исправлено, чтобы избежать двойного счета
+
+
+        ### # Сортируем столбцы для наглядности
+        ### sorted_columns = ['Total_Peaks', 'Total_Stage2', 'N+', 'N-'] + sorted([c for c in all_stage2_classes if c != 'N-'])
+        ### profiles_df = profiles_df[sorted_columns]
+
+        # Сортируем столбцы для наглядности
+        # Убедимся, что все ожидаемые колонки существуют перед сортировкой
+        existing_cols = profiles_df.columns.tolist()
+        base_cols = ['Total_Peaks', 'Total_Stage2', 'N+', 'N-']
+        other_cols = sorted([c for c in existing_cols if c not in base_cols])
+        sorted_columns = [col for col in base_cols if col in existing_cols] + other_cols
+        profiles_df = profiles_df[sorted_columns]
+
+
+        # Разделение на "занятых" и "свободных" пациентов
+        # 1. Загружаем списки зарезервированных пациентов из конфига
+        busy_config = config['data'].get('patient_busy', {})
+        busy_test = set(map(str, busy_config.get('test_pids', [])))
+        busy_val = set(map(str, busy_config.get('val_pids', [])))
+        busy_train = set(map(str, busy_config.get('train_pids', []))) # Используем 'train_pids'
+        
+        all_busy_pids = busy_test.union(busy_val, busy_train)
+
+        # 2. Получаем списки ID из нашего DataFrame
+        all_pids_in_df = profiles_df.index.astype(str).tolist()
+
+        # 3. Разделяем ID на две группы
+        busy_pids_in_df = sorted([pid for pid in all_pids_in_df if pid in all_busy_pids])
+        free_pids_in_df = sorted([pid for pid in all_pids_in_df if pid not in all_busy_pids])
+        
+        # 4. Создаем два отдельных DataFrame для вывода
+        df_busy = profiles_df.loc[busy_pids_in_df] if busy_pids_in_df else pd.DataFrame()
+        df_free = profiles_df.loc[free_pids_in_df] if free_pids_in_df else pd.DataFrame()
+
+        print("Сводная таблица профилей пациентов:")
+        # 5. Выводим сначала "занятых"
+        if not df_busy.empty:
+            print("\n" + "--- Зарезервированные (busy) пациенты ---".center(80))
+            print(df_busy.to_string())
+        
+        # 6. Выводим разделитель, если есть обе группы
+        if not df_busy.empty and not df_free.empty:
+            # Создаем разделитель по ширине таблицы
+            header_line = df_busy.to_string().split('\n')[0]
+            print('-' * len(header_line))
+
+        # 7. Выводим "свободных"
+        if not df_free.empty:
+            print("\n" + "--- Свободные (free) пациенты ---".center(80))
+            print(df_free.to_string())
+
+
+        ### print(profiles_df.to_string())
+
+        # Сохраняем в CSV для удобства
+        profiles_path = os.path.join(config['paths']['data_dir'], "patient_profiles.csv")
+        profiles_df.to_csv(profiles_path)
+        print(f"\nТаблица профилей сохранена в: {profiles_path}")
+        print("="*80)
