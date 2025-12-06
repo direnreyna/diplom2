@@ -322,9 +322,7 @@ class DatasetPreparing:
 
 
         print("Выборка сформирована")
-        ### return X_train_norm, y_train_with_aug, X_val_norm, y_val, X_test_norm, y_test, metadata_train, metadata_val, metadata_test
-        ### return X_train_norm, y_train_with_aug, X_val_norm, y_val, X_test_norm, y_test, metadata_train, metadata_val, metadata_test, metadata_full_unshuffled
-        
+
         # Обновляем возвращаемые значения, чтобы они соответствовали переменным после всех манипуляций
         return X_train_norm, y_train_final, X_val_norm, y_val_final, X_test_norm, y_test_final, metadata_train, metadata_val, metadata_test, metadata_full_unshuffled
 

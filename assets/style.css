@@ -1,0 +1,79 @@
+/* assets/style.css */
+
+/* === ОБЩИЙ ФОН И ЛОГОТИП === */
+gradio-app {
+    background-image: linear-gradient(to top left, rgba(0, 180, 219, 0.2), rgba(0, 255, 127, 0.2), white 40%) !important;
+    background-attachment: fixed !important;
+    background-repeat: no-repeat !important;
+}
+.footer-logo {
+    position: fixed !important; bottom: 20px !important; right: 20px !important;
+    width: 120px !important; z-index: 1000 !important; pointer-events: none !important;
+}
+
+/* === ЗАГОЛОВКИ === */
+.gradio-container h1 {
+    background: linear-gradient(to right, #00FF7F, #00B4DB);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    font-size: 2.8em !important; font-weight: bold; text-align: center; padding-top: 10px;
+}
+
+/*** /* === ЗАГОЛОВКИ РАЗДЕЛОВ С ИКОНКАМИ === */
+/*** .section-header {
+/***     display: flex !important; /* Включаем flex-контейнер для выравнивания */
+/***     align-items: center !important; /* Выравниваем иконку и текст по центру вертикально */
+/***     border-bottom: 2px solid #f0f0f0;
+/***     padding-bottom: 5px;
+/***     margin-top: 10px; /* Добавляем отступ сверху */
+/*** }
+/*** 
+/*** .section-header img {
+/***     width: 32px !important; /* Размер иконки */
+/***     height: 32px !important;
+/***     margin-right: 10px !important; /* Отступ между иконкой и текстом */
+/*** }
+/*** 
+/*** .section-header h3 {
+/***     color: #00B4DB !important;
+/***     font-size: 1.4em !important;
+/***     margin-bottom: 0 !important; /* Убираем стандартный отступ у заголовка */
+/*** }
+
+/*** /* === ЗАГОЛОВКИ РАЗДЕЛОВ h3 === */
+/* Стиль для обычных заголовков ### */
+.gradio-markdown h3 {
+    color: #00B4DB !important;
+}
+
+/* === ВКЛАДКИ (TABS) === */
+button[id*="-button"] {
+    border-radius: 8px 8px 0 0 !important;
+    border: none !important;
+    background: linear-gradient(to right, rgba(0, 255, 127, 0.3), rgba(0, 180, 219, 0.3)) !important;
+    color: #555 !important;
+    font-weight: bold !important;
+    transition: all 0.2s ease-in-out;
+}
+
+button[id*="-button"].selected {
+    background: linear-gradient(to right, #00FF7F, #00B4DB) !important;
+    color: white !important;
+}
+
+/* === КНОПКИ С ИКОНКАМИ === */
+.gradio-container button.big-icon-button img { 
+    width: 32px !important; height: 32px !important; 
+}
+.gradio-container button.big-icon-button { 
+    justify-content: flex-start !important; padding-left: 20px !important; 
+    /* Добавляем стили, которые пропали после отключения темы */
+    background: linear-gradient(to right, rgba(0, 255, 127, 0.3), rgba(0, 180, 219, 0.3)) !important;
+    border: 1px solid #e0e0e0 !important;
+}
+
+/* Эффект при наведении на кнопку */
+.gradio-container button.big-icon-button:hover {
+    background: linear-gradient(to right, #00FF7F, #00B4DB) !important;
+    color: white !important;
+    border-color: #00B4DB !important;
+}

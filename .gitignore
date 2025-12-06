@@ -5,8 +5,9 @@ origins/
 temp/
 input/*
 mlruns/*
-mlruns_old/*
+mlruns_2/*
 src/__pycache__/
+backup_additional_files/*
 model/
 
 wfdb
