@@ -4,8 +4,9 @@ data/*
 !data/[0-9]*.csv
 !data/[0-9]*annotations.txt
 
-# Папка с доп. датасетом
+# Доп. датасеты
 data_p_net/*
+wfdb
 
 # Окружение
 venv_diplom2/
@@ -32,7 +33,6 @@ model/
 !model/top_stage1_best_model.keras
 !model/top_stage2_scalers_minmax.pkl
 !model/top_stage1_scalers_minmax.pkl
-
 
 wfdb
 
