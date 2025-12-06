@@ -1,13 +1,38 @@
+# Папка с данными
 data/*
+# Разрешаем нужные файлы датасета
+!data/[0-9]*.csv
+!data/[0-9]*annotations.txt
+
+# Папка с доп. датасетом
 data_p_net/*
+
+# Окружение
 venv_diplom2/
+
+#Дополнительные файлы
 origins/
 temp/
 input/*
+backup_additional_files/*
+
+#Эксперименты зарегистрированные в MLflow
 mlruns/*
 mlruns_2/*
+
+# Системный кэш
 src/__pycache__/
-backup_additional_files/*
+
+# Модели и артефакты
 model/
+# Разрешаем лучшие модели, веса по стадиям и их скейлеры
+!model/top_stage2_best_model.weights.h5
+!model/top_stage2_best_model.keras
+!model/top_stage1_best_model.weights.h5
+!model/top_stage1_best_model.keras
+!model/top_stage2_scalers_minmax.pkl
+!model/top_stage1_scalers_minmax.pkl
+
 
 wfdb
+
