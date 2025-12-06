@@ -19,6 +19,7 @@ backup_additional_files/*
 
 #Эксперименты зарегистрированные в MLflow
 mlruns/*
+mlruns_1/*
 mlruns_2/*
 
 # Системный кэш

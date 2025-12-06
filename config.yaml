@@ -1,8 +1,8 @@
 # config.yaml
 
 execution:
-  stage: 'stage1'
-  prefix: 'top'
+  stage: 'stage1' ## 'stage1' / 'stage2' 
+  prefix: 'top' ##'stage1' 
   mode: 'eval' ## 'full' для обучения / 'eval' для оценки
   load_from_mlflow: False ## True / False
   mlflow_run_id:
